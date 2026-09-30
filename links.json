@@ -1,14 +1,16 @@
 [
   {
+    "ok": true,
     "name": "V2324A",
     "model": "V2324A",
-    "brand": "vivo",
     "android": "16",
     "ver": "1.0",
+    "ip": "127.0.0.1",
+    "brand": "vivo",
+    "fg": true,
     "port": 35791,
-    "filePort": 35792,
-    "ip": "192.168.1.7",
-    "fg": false,
-    "ok": true
+    "usb": true,
+    "serial": "10ADBG11SA000XG",
+    "mode": "usb"
   }
 ]

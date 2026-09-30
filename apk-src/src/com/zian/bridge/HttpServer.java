@@ -223,6 +223,9 @@ public class HttpServer extends NanoHTTPD {
             // 原样读取字节（不 decode->re-encode）：保证手机剪贴板内容与 PC 推送字节一致，
             // 回传的内容哈希才能与 PC 端记录的 sig 对上，否则双向同步死循环。
             byte[] png = readFileBytes(tmp);
+            // NanoHTTPD parseBody 会把 multipart 文件写入临时文件（DefaultTempFileManager），
+            // 数据已在内存，读取后立即删除，否则每次推图都在 tmp 目录残留一个完整 PNG（磁盘泄漏）
+            new File(tmp).delete();
             if (png == null || png.length == 0) return json("{\"ok\":false,\"err\":\"read fail\"}");
             Bitmap bmp = BitmapFactory.decodeByteArray(png, 0, png.length);
             if (bmp == null) return json("{\"ok\":false,\"err\":\"not image\"}");

@@ -738,6 +738,7 @@ ipcMain.handle('clipboard:watch:start', (e) => {
   echoGuard = '';
   let lastPhoneWrittenSig = '';  // 最近一次从手机写回本机的内容 sig（手机端哈希），防重复写回
   let tickBusy = false;          // tick 防重入：上一轮 await 未完成时跳过本轮
+  let pushFailUntil = 0;         // 推送失败退避：在此之前不重推（防止对不可达设备每秒重试风暴）
   clipboardTimer = setInterval(async () => {
     if (tickBusy) return;
     tickBusy = true;
@@ -745,11 +746,21 @@ ipcMain.handle('clipboard:watch:start', (e) => {
       // 1. 本地剪贴板变化 → 推送到手机
       const local = localClipSig();
       let pushed = false;
-      if (local.sig !== lastClipSig) {
-        lastClipSig = local.sig;
-        echoGuard = local.sig;   // 防止手机端 /clipboard 回传时反向推送回来
+      if (local.sig && local.sig !== lastClipSig && Date.now() > pushFailUntil) {
         if (currentLink) {
-          try { await pushClipToPhone(currentLink.ip, currentLink.port, local.payload); pushed = true; } catch {}
+          // 必须检查返回值：pushClipToPhone 失败走 resolve({ok:false}) 不抛异常。
+          // 只有推送成功才记录 sig——失败时保留旧记录让下一 tick 自动重试（带退避），
+          // 且失败不再跳过拉取，否则手机旧内容会把本机刚复制的内容覆盖掉（内容丢失）
+          const r = await pushClipToPhone(currentLink.ip, currentLink.port, local.payload);
+          if (r && r.ok) {
+            pushed = true;
+            lastClipSig = local.sig;
+            echoGuard = local.sig;   // 防止手机端 /clipboard 回传时反向推送回来
+          } else {
+            pushFailUntil = Date.now() + 8000;
+          }
+        } else {
+          lastClipSig = local.sig;   // 无连接：仅记录，连接后由回环机制决定方向
         }
       }
 
@@ -761,7 +772,12 @@ ipcMain.handle('clipboard:watch:start', (e) => {
       const remote = await httpGetJson(currentLink.ip, currentLink.port, '/clipboard');
       if (!remote) return;
       const remoteSig = (remote.type === 'text' ? 'txt:' : remote.type === 'image' ? 'img:' : 'empty:') + (remote.sig || '');
-      if (remoteSig !== lastClipSig && remoteSig !== echoGuard && remoteSig !== lastPhoneWrittenSig) {
+      if (remoteSig === echoGuard) {
+        // 防回环令牌一次性化：匹配（这是我方推送内容的回传）后立即清空。
+        // 残留不清理的话，之后任何时刻用户在手机上手动复制相同内容都会被误忽略，
+        // 尤其是推送失败场景残留的 sig 会永久屏蔽该内容的手机→PC 同步
+        echoGuard = '';
+      } else if (remoteSig !== lastClipSig && remoteSig !== lastPhoneWrittenSig) {
         lastPhoneWrittenSig = remoteSig;
         if (remote.type === 'text') {
           try {
