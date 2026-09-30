@@ -1,0 +1,16 @@
+{
+  "name": "zian-toolbox",
+  "productName": "梓安搞机工具箱",
+  "version": "1.0.0",
+  "description": "梓安搞机工具箱 - 基于 ADB 的安卓设备管理工具",
+  "main": "main.js",
+  "author": "梓安",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-packager . 梓安搞机工具箱 --platform=win32 --arch=x64 --out=dist --overwrite --asar --icon=assets/icon.ico --extra-resource=resources/adb --extra-resource=resources/scrcpy --extra-resource=resources/ffmpeg --ignore=dist --ignore=resources --ignore=assets --ignore=Screenshots --ignore=ApkExt --ignore=Script"
+  },
+  "devDependencies": {
+    "@electron/packager": "^18.3.6",
+    "electron": "^33.2.0"
+  }
+}

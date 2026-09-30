@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>梓安搞机工具箱</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- 标题栏 -->
+  <header id="titlebar">
+    <span class="tb-title">梓安搞机工具箱 - 全安卓通用免ROOT玩机神器</span>
+    <div class="tb-btns">
+      <button id="btn-min" title="最小化">─</button>
+      <button id="btn-close" title="关闭">✕</button>
+    </div>
+  </header>
+
+  <div id="app">
+    <!-- 侧边导航 -->
+    <aside id="nav">
+      <button class="nav-item active" data-view="home"><i>🏠</i>主页</button>
+      <button class="nav-item" data-view="interconnect"><i>🔗</i>互联</button>
+      <button class="nav-item" data-view="apps"><i>📦</i>软件管理</button>
+      <button class="nav-item" data-view="display"><i>🖥️</i>显示控制</button>
+      <button class="nav-item" data-view="sysui"><i>⚙️</i>系统界面</button>
+      <button class="nav-item" data-view="battery"><i>🔋</i>电池管理</button>
+      <button class="nav-item" data-view="adjust"><i>🎚️</i>无级调节</button>
+      <button class="nav-item" data-view="shot"><i>📷</i>截图录屏</button>
+      <button class="nav-item" data-view="scripts"><i>📜</i>控机脚本</button>
+      <button class="nav-item" data-view="adbterm"><i>💻</i>ADB终端</button>
+      <button class="nav-item" data-view="settings"><i>🛠️</i>软件设置</button>
+      <button class="nav-item" data-view="about"><i>ℹ️</i>关于</button>
+      <div id="nav-status"><span class="dot off"></span><span id="nav-status-txt">未连接</span></div>
+    </aside>
+
+    <!-- 主区域 -->
+    <main id="main">
+
+      <!-- ============ 主页 ============ -->
+      <section class="view active" id="view-home">
+        <div class="col">
+          <div class="row-between">
+            <h2 class="sec-title" id="home-title">设备信息</h2>
+            <div class="dev-select-box">
+              <span class="dev-select-label">设备列表</span>
+              <select id="dev-select"></select>
+              <button class="btn" id="btn-dev-refresh">⟳ 刷新</button>
+              <button class="btn" id="btn-net-debug">⊕ 网络调试</button>
+            </div>
+          </div>
+          <div class="card info-card">
+            <div class="info-grid" id="info-main">
+              <span class="hint" style="grid-column:1/-1">请连接设备后点击「读取信息」</span>
+            </div>
+            <div class="info-extra" id="info-extra">
+              <div><b>系统架构：</b>—</div>
+              <div><b>编译版本：</b>—</div>
+              <div><b>内核版本：</b>—</div>
+            </div>
+          </div>
+          <button class="btn primary" id="btn-readinfo">读取设备信息</button>
+
+          <h2 class="sec-title">快速重启</h2>
+          <div class="btn-grid g3">
+            <button class="btn" data-reboot="system"><i>⟳</i>重启</button>
+            <button class="btn" data-reboot="bootloader"><i>⚡</i>Fastboot</button>
+            <button class="btn" data-reboot="edl"><i>⚡</i>EDL</button>
+            <button class="btn" data-reboot="shutdown"><i>⏻</i>关机</button>
+            <button class="btn" data-reboot="fastbootd"><i>⚡</i>Fastbootd</button>
+            <button class="btn" data-reboot="recovery"><i>⇅</i>Recovery</button>
+          </div>
+          <pre id="home-out" class="console hidden"></pre>
+        </div>
+      </section>
+
+      <!-- ============ 互联 ============ -->
+      <section class="view" id="view-interconnect">
+        <!-- 顶部卡片：设备 / 剪贴板 / 镜像 -->
+        <div class="ic-top">
+          <div class="ic-card ic-device">
+            <h2 class="ic-dev-name" id="ic-dev-name">未连接设备</h2>
+            <div class="ic-dev-sub" id="ic-dev-sub">点击「扫描」发现同一局域网内的手机（≤30 秒自动连接）</div>
+            <div class="ic-dev-btns">
+              <select id="link-mode" class="ic-select" title="连接方式：USB优先，失败转局域网">
+                <option value="auto">连接方式：自动</option>
+                <option value="lan">仅局域网</option>
+                <option value="usb">仅 USB 数据线</option>
+              </select>
+              <button class="ic-chip" id="btn-link-refresh" title="手动刷新：重新 ping + 刷新文件列表">⟳ 刷新</button>
+              <button class="ic-chip" id="btn-link-scan">◎ 扫描</button>
+              <button class="ic-chip" id="btn-link-disconnect">✕ 断开</button>
+            </div>
+            <div class="ic-dev-btns" style="margin-top:8px">
+              <select id="link-select" class="ic-select wide"><option value="">未连接</option></select>
+            </div>
+            <div class="ic-dev-meta" id="ic-dev-meta"></div>
+          </div>
+          <div class="ic-card ic-feature" id="card-clip" title="剪贴板双向同步：电脑或手机复制后自动同步到对端">
+            <div class="ic-ficon">⇄</div>
+            <b>超级剪贴板</b>
+            <span id="clip-state">未开启 · 点击开启</span>
+          </div>
+          <div class="ic-card ic-feature" id="card-mirror" title="投屏与键鼠控制（走 ADB 通道，与录屏互斥）">
+            <div class="ic-ficon">🖥️</div>
+            <b>手机投屏</b>
+            <span id="mirror-state">将手机屏幕投到电脑</span>
+          </div>
+        </div>
+
+        <!-- 剪贴板 / 镜像操作行 -->
+        <div class="ic-ops">
+          <div class="ic-ops-group">
+            <button class="ic-chip" id="btn-clip-pull">⤓ 拉取手机剪贴板</button>
+            <button class="ic-chip" id="btn-clip-push">⤒ 推送当前剪贴板</button>
+            <div class="clip-preview inline" id="clip-preview"><span class="hint">暂无同步内容</span></div>
+          </div>
+          <div class="ic-ops-group">
+            <select id="mirror-serial" class="ic-select wide"><option value="">未选择 USB/无线调试设备</option></select>
+            <button class="ic-chip" id="btn-mirror-start">▶ 开始镜像</button>
+            <button class="ic-chip" id="btn-mirror-stop" disabled>■ 停止</button>
+          </div>
+        </div>
+        <div class="progress-bar hidden" id="files-progress-bar"><div class="progress-fill" id="files-progress-fill"></div></div>
+
+        <!-- 文件管理器 -->
+        <div class="fm-wrap">
+          <aside class="fm-side">
+            <h3>文件管理</h3>
+            <div class="fm-cat" data-tab="recent"><i>🕘</i>最近文件<span class="fm-count" id="cnt-recent"></span></div>
+            <div class="fm-cat" data-tab="images"><i>🖼️</i>图片<span class="fm-count" id="cnt-images"></span></div>
+            <div class="fm-cat" data-tab="videos"><i>🎬</i>视频<span class="fm-count" id="cnt-videos"></span></div>
+            <div class="fm-cat" data-tab="music"><i>🎵</i>音频<span class="fm-count" id="cnt-music"></span></div>
+            <div class="fm-cat" data-tab="docs"><i>📄</i>文档<span class="fm-count" id="cnt-docs"></span></div>
+            <div class="fm-cat" data-tab="storage"><i>📂</i>手机存储</div>
+          </aside>
+          <div class="fm-main">
+            <div class="fm-toolbar">
+              <button class="ic-chip primary" id="btn-files-push">📥 导入电脑文件</button>
+              <input id="fm-search" class="fm-search" placeholder="搜索当前分类…">
+              <button class="ic-chip" id="btn-files-up" disabled>⬆ 上级</button>
+              <button class="ic-chip" id="btn-files-refresh">⟳ 刷新</button>
+              <span class="fm-spacer"></span>
+              <button class="ic-chip view-toggle active" id="btn-view-grid" title="网格视图">▦</button>
+              <button class="ic-chip view-toggle" id="btn-view-list" title="列表视图">☰</button>
+            </div>
+            <div id="files-list" class="fm-body"><div class="hint">连接手机后自动加载</div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 软件管理 ============ -->
+      <section class="view" id="view-apps">
+        <div class="grid-2">
+          <div class="col">
+            <h2 class="sec-title">软件管理</h2>
+            <input id="app-pkg" class="line-input" placeholder="软件包名（关闭自动填充可手动输入）">
+            <div class="btn-grid g4">
+              <button class="btn" data-app="disable"><i>⊘</i>禁用</button>
+              <button class="btn" data-app="enable"><i>✓</i>启用</button>
+              <button class="btn" data-app="run"><i>▶</i>运行</button>
+              <button class="btn" data-app="forcestop"><i>■</i>强制停止</button>
+              <button class="btn" data-app="uninstall"><i>🗑</i>卸载</button>
+              <button class="btn" data-app="uninstallkeep"><i>🗑</i>保留数据卸载</button>
+              <button class="btn" data-app="extract"><i>💾</i>提取安装包</button>
+              <button class="btn" data-app="clear"><i>🧹</i>清除数据</button>
+              <button class="btn" data-app="info"><i>ⓘ</i>软件信息</button>
+            </div>
+            <div class="focus-box">
+              <div class="focus-line"><span>当前界面包名</span><b id="focus-pkg">获取中…</b></div>
+              <label class="switch-line"><input type="checkbox" id="focus-auto">自动填充</label>
+            </div>
+            <h2 class="sec-title">操作记录</h2>
+            <pre id="app-log" class="console">—</pre>
+          </div>
+          <div class="col">
+            <h2 class="sec-title">安装APK / 推送文件</h2>
+            <div class="btn-grid g2">
+              <button class="btn primary" id="btn-app-install"><i>🤖</i>安装软件</button>
+              <button class="btn primary" id="btn-app-push"><i>📤</i>发送文件</button>
+            </div>
+            <h2 class="sec-title">Google 套件管理</h2>
+            <div class="check-grid" id="gapps-grid"></div>
+            <div class="btn-grid g2">
+              <button class="btn" id="btn-gapps-disable"><i>⊘</i>禁用所选</button>
+              <button class="btn" id="btn-gapps-enable"><i>✓</i>启用所选</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 显示控制 ============ -->
+      <section class="view" id="view-display">
+        <div class="grid-2">
+          <div class="col">
+            <h2 class="sec-title">屏幕分辨率</h2>
+            <p class="field-label">分辨率：<b id="cur-res">—</b></p>
+            <div class="input-duo">
+              <input id="res-w" class="line-input" placeholder="横向像素">
+              <input id="res-h" class="line-input" placeholder="纵向像素">
+            </div>
+            <div class="btn-grid g2">
+              <button class="btn" id="btn-res-set"><i>✓</i>修改</button>
+              <button class="btn" id="btn-res-reset"><i>⟳</i>恢复</button>
+            </div>
+          </div>
+          <div class="col">
+            <h2 class="sec-title">显示密度</h2>
+            <p class="field-label">显示密度(DPI)：<b id="cur-dpi">—</b>　最小宽度(dp)：<b id="cur-minw">—</b></p>
+            <div class="input-duo">
+              <input id="dpi-input" class="line-input" placeholder="DPI">
+            </div>
+            <div class="btn-grid g2">
+              <button class="btn" id="btn-dpi-set"><i>✓</i>修改</button>
+              <button class="btn" id="btn-dpi-reset"><i>⟳</i>恢复</button>
+            </div>
+          </div>
+        </div>
+        <h2 class="sec-title">按键模拟</h2>
+        <div class="btn-grid g4 keys">
+          <button class="btn" data-key="4"><i>◁</i>返回</button>
+          <button class="btn" data-key="3"><i>◯</i>主页</button>
+          <button class="btn" data-key="187"><i>▢</i>多任务</button>
+          <button class="btn" data-key="26" id="btn-key-lock"><i>🔒</i>锁屏</button>
+          <button class="btn" data-key="24"><i>🔊</i>音量+</button>
+          <button class="btn" data-key="25"><i>🔉</i>音量-</button>
+          <button class="btn" data-key="164"><i>🔇</i>静音</button>
+          <button class="btn" data-key="120" id="btn-key-shot"><i>📱</i>截屏</button>
+        </div>
+        <p class="foot-note">*右键点击【锁屏】可弹出关机菜单（部分设备无效，请自行尝试）<br>*右键点击【截屏】可截图并打开存放截图的文件夹</p>
+        <pre id="display-out" class="console hidden"></pre>
+      </section>
+
+      <!-- ============ 系统界面 ============ -->
+      <section class="view" id="view-sysui">
+        <div class="grid-2">
+          <div class="col">
+            <h2 class="sec-title">隐藏状态栏图标</h2>
+            <div class="check-grid" id="icon-grid"></div>
+            <p class="hint">勾选表示隐藏，不勾选则显示。点击隐藏统一生效。</p>
+            <div class="btn-grid g2">
+              <button class="btn" id="btn-icon-read">读取当前</button>
+              <button class="btn" id="btn-icon-apply"><i>👁</i>隐藏</button>
+            </div>
+            <h2 class="sec-title">状态栏图标设置 <span class="miui-tag">MIUI 专用</span></h2>
+            <div class="input-duo">
+              <select id="miui-count">
+                <option value="">下拉图标个数</option>
+                <option value="4">4</option><option value="5">5</option>
+                <option value="6">6</option><option value="7">7</option>
+              </select>
+              <select id="miui-gap">
+                <option value="">图标顶部间距</option>
+                <option value="0">0</option><option value="2">2</option>
+                <option value="4">4</option><option value="6">6</option>
+              </select>
+            </div>
+            <button class="btn" id="btn-miui-apply">Wi-Fi 图标去除 x 或 !（关闭网络检测）</button>
+          </div>
+          <div class="col">
+            <h2 class="sec-title">双栏自动沉浸</h2>
+            <div class="btn-grid g2">
+              <button class="btn" data-immersive="status"><i>⬒</i>沉浸状态栏</button>
+              <button class="btn" data-immersive="navigation"><i>⬓</i>沉浸导航栏</button>
+              <button class="btn" data-immersive="full"><i>⬛</i>同时沉浸</button>
+              <button class="btn" data-immersive="reset"><i>👁</i>全部恢复</button>
+            </div>
+            <input id="immersive-exclude" class="line-input" placeholder="排除软件（包名，英文逗号分隔）">
+            <div class="note-box">
+              1.全部不沉浸，但在某些软件内沉浸：<br>填写软件包名，多个包名中间用英文逗号隔开<br>如：com.android.settings,com.miui.gallery<br><br>
+              2.全部沉浸，但在某些软件内不沉浸：<br>同上，但要在每个软件包名前加逗号，开头要加 apps<br>如：apps,-com.android.settings,-com.miui.gallery
+            </div>
+          </div>
+        </div>
+        <pre id="sysui-out" class="console hidden"></pre>
+      </section>
+
+      <!-- ============ 电池管理 ============ -->
+      <section class="view" id="view-battery">
+        <h2 class="sec-title">电池信息</h2>
+        <div class="card info-card">
+          <div class="info-grid" id="bat-info"><span class="hint" style="grid-column:1/-1">连接设备后点击「刷新」</span></div>
+        </div>
+        <button class="btn primary" id="btn-bat-refresh">刷新</button>
+        <pre id="battery-out" class="console hidden"></pre>
+      </section>
+
+      <!-- ============ 无级调节 ============ -->
+      <section class="view" id="view-adjust">
+        <h2 class="sec-title">字体大小倍数</h2>
+        <div class="slider-box">
+          <label>缩放</label>
+          <input type="range" id="sl-font" min="0.5" max="4" step="0.05" value="1">
+          <div class="scale-marks"><span>0.5</span><span>1x</span><span>2x</span><span>3x</span><span>4x</span></div>
+          <div class="slider-info">当前倍数：<b id="font-cur">—</b><br>设定倍数：<b id="font-set">1x</b></div>
+        </div>
+        <h2 class="sec-title">动画速度</h2>
+        <div class="slider-box">
+          <label>窗口</label><input type="range" id="sl-win" min="0" max="4" step="0.1" value="1">
+          <label>过渡</label><input type="range" id="sl-trans" min="0" max="4" step="0.1" value="1">
+          <label>程序</label><input type="range" id="sl-anim" min="0" max="4" step="0.1" value="1">
+          <div class="slider-info">窗口：<b id="win-v">1x</b><br>过渡：<b id="trans-v">1x</b><br>程序：<b id="anim-v">1x</b></div>
+        </div>
+        <h2 class="sec-title">锁屏时间</h2>
+        <div class="row-like">
+          <input id="lock-input" class="line-input" placeholder="自动锁屏时间(s)">
+          <span class="lock-cur">当前锁屏时间：<b id="lock-cur">—</b></span>
+          <button class="btn" id="btn-lock-set"><i>✓</i>修改</button>
+        </div>
+        <button class="btn primary" id="btn-adjust-read">读取当前值</button>
+        <pre id="adjust-out" class="console hidden"></pre>
+      </section>
+
+      <!-- ============ 截图录屏 ============ -->
+      <section class="view" id="view-shot">
+        <div class="grid-2">
+          <div class="col">
+            <h2 class="sec-title">屏幕截图</h2>
+            <div class="btn-grid g2">
+              <button class="btn primary" id="btn-shot"><i>📷</i>立即截图</button>
+              <button class="btn" id="btn-open-shot" disabled><i>📁</i>打开目录</button>
+            </div>
+            <div id="shot-preview" class="shot-box"><span class="hint">暂无截图</span></div>
+          </div>
+          <div class="col">
+            <h2 class="sec-title">屏幕录制</h2>
+            <div class="input-duo">
+              <input id="rec-sec" class="line-input" type="number" value="5" min="3" max="180">
+              <select id="rec-audio">
+                <option value="playback">设备内录（系统播放音）</option>
+                <option value="mic">手机麦克风</option>
+                <option value="output">系统总输出声音</option>
+                <option value="none">无声音</option>
+              </select>
+            </div>
+            <p class="hint">使用 scrcpy 录制屏幕与音频到本地文件，<b>电脑端全程无声</b>。音源说明：内录=系统播放音（vivo 上可能录到静音、手机扬声器静音）；麦克风=手机麦克风声（手机扬声器正常出声）；系统总输出=输出扬声器的总音频流。到时自动结束，也可手动停止。</p>
+            <div class="btn-grid g3">
+              <button class="btn primary" id="btn-record"><i>⏺</i>开始录制</button>
+              <button class="btn" id="btn-record-stop" disabled><i>⏹</i>结束录制</button>
+              <button class="btn" id="btn-open-rec" disabled><i>📁</i>打开目录</button>
+            </div>
+            <pre id="rec-state" class="console">待命</pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 控机脚本 ============ -->
+      <section class="view" id="view-scripts">
+        <h2 class="sec-title">自动化控机脚本</h2>
+        <div class="script-layout">
+          <div class="card flex-col editor-card">
+            <div class="card-head">脚本编辑区 <span id="script-name-tag" class="hint"></span></div>
+            <textarea id="script-editor" spellcheck="false" placeholder="未选择脚本"></textarea>
+          </div>
+          <div class="card flex-col mid-card">
+            <div class="card-head">插入脚本</div>
+            <div class="ins-grid">
+              <button class="btn ghost" data-ins="touch"><i>☝</i>触摸模拟</button>
+              <button class="btn ghost" data-ins="key"><i>⌨</i>按键模拟</button>
+              <button class="btn ghost" data-ins="app"><i>▣</i>软件控制</button>
+              <button class="btn ghost" data-ins="sys"><i>⚙</i>系统控制</button>
+              <button class="btn ghost" data-ins="ctrl"><i>▤</i>脚本控制</button>
+            </div>
+            <label class="switch-line center"><input type="checkbox" id="script-autodelay" checked>自动延时</label>
+            <button class="btn primary full" id="btn-script-run"><i>▶</i>保存并运行</button>
+          </div>
+          <div class="card flex-col mid-card">
+            <div class="card-head">脚本选择</div>
+            <div id="script-list" class="list-box tall-list"></div>
+            <div class="btn-grid g2">
+              <button class="btn" id="btn-script-new"><i>✓</i>新建</button>
+              <button class="btn" id="btn-script-refresh"><i>⟳</i>刷新</button>
+            </div>
+          </div>
+        </div>
+        <pre id="cmd-out" class="console dark">等待操作…</pre>
+      </section>
+
+      <!-- ============ ADB终端 ============ -->
+      <section class="view" id="view-adbterm">
+        <h2 class="sec-title">ADB 终端</h2>
+        <div class="row-like">
+          <input id="term-input" class="line-input grow" placeholder="输入 adb 命令（无需带 adb 前缀），如：devices -l / shell ls /sdcard">
+          <button class="btn primary" id="btn-term-run">执行</button>
+          <button class="btn" id="btn-term-clear">清屏</button>
+        </div>
+        <pre id="term-out" class="console dark tall">$ ADB 终端就绪。命令不带 adb 前缀，示例：devices -l</pre>
+        <h2 class="sec-title">logcat 日志</h2>
+        <div class="row-like">
+          <button class="btn" id="btn-logcat">▶ 启动 logcat</button>
+          <button class="btn" id="btn-logcat-stop">■ 停止</button>
+          <button class="btn" id="btn-logcat-clear">清空</button>
+          <input id="log-filter" class="line-input" placeholder="过滤关键字…">
+        </div>
+        <pre id="logcat-view" class="console dark tall">— 日志区 —</pre>
+      </section>
+
+      <!-- ============ 软件设置 ============ -->
+      <section class="view" id="view-settings">
+        <div class="grid-2">
+          <div class="col">
+            <h2 class="sec-title">默认启动页</h2>
+            <div class="row-like">
+              <select id="set-startview" style="max-width:220px">
+                <option value="home">主页</option>
+                <option value="interconnect">互联</option>
+                <option value="apps">软件管理</option>
+                <option value="display">显示控制</option>
+                <option value="sysui">系统界面</option>
+                <option value="battery">电池管理</option>
+                <option value="adjust">无级调节</option>
+                <option value="shot">截图录屏</option>
+                <option value="scripts">控机脚本</option>
+                <option value="adbterm">ADB终端</option>
+              </select>
+              <button class="btn" id="btn-set-startview"><i>✓</i>保存</button>
+            </div>
+            <h2 class="sec-title">CPU频率更新间隔</h2>
+            <div class="row-like">
+              <input id="set-cpu" class="line-input" style="max-width:220px" placeholder="单位ms" value="1000">
+              <button class="btn" id="btn-set-cpu"><i>✓</i>保存</button>
+            </div>
+            <p class="hint">主页 CPU 各核频率自动刷新周期，0 为关闭。</p>
+            <h2 class="sec-title">ADB终端</h2>
+            <label class="switch-line"><input type="checkbox" id="set-term-clearin">执行后清空输入</label>
+            <label class="switch-line"><input type="checkbox" id="set-term-clearout">执行后清空输出</label>
+          </div>
+          <div class="col">
+            <h2 class="sec-title">主题配色</h2>
+            <div class="row-like">
+              <button class="btn" id="btn-theme"><i>⇄</i>切换</button>
+              <span class="hint" id="theme-now">当前：经典蓝</span>
+            </div>
+            <h2 class="sec-title">软件安装 / 发送文件</h2>
+            <input id="set-pushpath" class="line-input" placeholder="手机端接收路径(以 / 结尾)">
+            <div class="row-like">
+              <label class="switch-line"><input type="checkbox" id="set-downgrade">允许降级安装</label>
+              <button class="btn" id="btn-set-push"><i>✓</i>保存</button>
+            </div>
+            <h2 class="sec-title">截屏</h2>
+            <label class="switch-line"><input type="checkbox" id="set-shotpush" checked>同时推送到电脑</label>
+            <label class="switch-line"><input type="checkbox" id="set-shotdel" disabled>推送后删除手机内截屏</label>
+          </div>
+        </div>
+        <pre id="settings-out" class="console hidden"></pre>
+      </section>
+
+      <!-- ============ 关于 ============ -->
+      <section class="view" id="view-about">
+        <div class="grid-2">
+          <div class="card about-box">
+            <h3>开发者</h3>
+            <div class="dev-links">
+              <span>抖音 · sky·梓安</span><span>酷安 · 梓安win</span>
+              <span>B站 · 梓安丨梓里安平</span><span>GitHub · 梓安</span>
+            </div>
+          </div>
+          <div class="card about-box">
+            <h3>版本</h3>
+            <div class="ver-lines" id="about-versions">Main: …</div>
+          </div>
+          <div class="card about-box">
+            <h3>界面动画</h3>
+            <div class="anim-setting">
+              <label class="switch-line" style="margin-top:0"><input type="checkbox" id="set-anim-enable" checked> 启用切换动画</label>
+              <div class="anim-speed-row">
+                <span>动画速度</span>
+                <input type="range" id="set-anim-speed" min="80" max="600" step="20" value="240">
+                <b id="anim-speed-val">240ms</b>
+              </div>
+              <p class="anim-note">主页侧栏与互联分类使用两套不同的切换动画</p>
+            </div>
+          </div>
+          <div class="card about-box">
+            <h3>免责声明</h3>
+            <p class="decl">本工具为全安卓通用软件，使用本工具则代表您有一定玩机知识储备。<br>若盲目操作导致无法开机或丢失数据则后果自负，作者不承担任何责任！</p>
+          </div>
+        </div>
+        <p class="free-line">本工具永久免费。如果您通过购买获得，请立即申请退款并差评！</p>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- 网络调试弹窗 -->
+  <div id="modal-mask" class="hidden">
+    <div id="net-modal">
+      <h3>无线调试 <span class="miui-tag">Android 11+</span></h3>
+      <p class="hint">手机端：开发者选项 → 无线调试 → 使用配对码配对设备</p>
+      <label>配对 IP <input id="pair-ip" placeholder="192.168.1.100"></label>
+      <label>配对端口 <input id="pair-port" placeholder="xxxxx"></label>
+      <label>配对码 <input id="pair-code" placeholder="6位数字" maxlength="6"></label>
+      <button class="btn primary" id="btn-pair">① 配对授权</button>
+      <hr>
+      <label>连接 IP <input id="conn-ip" placeholder="192.168.1.100"></label>
+      <label>连接端口 <input id="conn-port" placeholder="xxxxx"></label>
+      <button class="btn primary" id="btn-connect-wifi">② 连接设备</button>
+      <pre id="net-out" class="console"></pre>
+      <button class="btn" id="btn-net-close">关闭</button>
+    </div>
+  </div>
+
+  <div id="toasts"></div>
+  <!-- 悬停文件信息（body 直接子级，避免任何父容器裁剪） -->
+  <div id="fm-tip" class="fm-tip hidden"></div>
+  <script src="renderer.js"></script>
+</body>
+</html>

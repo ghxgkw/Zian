@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:padding="24dp"
+    android:background="#070c18">
+
+    <TextView
+        android:id="@+id/tv_status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:text="梓安互联桥"
+        android:textColor="#7df9ff"
+        android:textSize="18sp"
+        android:lineSpacingExtra="4dp"
+        android:layout_marginBottom="24dp" />
+
+    <Button
+        android:id="@+id/btn_start"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="启动互联桥"
+        android:textColor="#070c18"
+        android:backgroundTint="#7df9ff" />
+
+    <Button
+        android:id="@+id/btn_keepalive"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:text="后台保活设置（推荐）"
+        android:textColor="#7df9ff"
+        android:backgroundTint="#12203a" />
+
+    <Button
+        android:id="@+id/btn_pause_lan"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:text="暂停局域网（仅 USB 可用）"
+        android:textColor="#070c18"
+        android:backgroundTint="#ff9800" />
+</LinearLayout>

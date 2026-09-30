@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Bridge" parent="android:Theme.Material.NoActionBar">
+        <item name="android:colorPrimary">#0d1b2a</item>
+        <item name="android:colorPrimaryDark">#070c18</item>
+        <item name="android:colorAccent">#7df9ff</item>
+        <item name="android:windowBackground">#070c18</item>
+    </style>
+</resources>

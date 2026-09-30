@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>梓安</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    background: transparent;
+    overflow: hidden;
+    user-select: none;
+    font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+  }
+  .stage {
+    position: relative;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background:
+      radial-gradient(ellipse 60% 50% at 50% 42%, rgba(0, 229, 255, .10), transparent 70%),
+      radial-gradient(ellipse 40% 35% at 50% 45%, rgba(255, 43, 214, .08), transparent 70%),
+      #04060c;
+    border: 1px solid rgba(0, 229, 255, .25);
+    box-shadow: inset 0 0 60px rgba(0, 229, 255, .06);
+  }
+  /* HUD 网格 */
+  .stage::before {
+    content: '';
+    position: absolute; inset: 0;
+    background:
+      linear-gradient(rgba(0,229,255,.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,229,255,.05) 1px, transparent 1px);
+    background-size: 34px 34px;
+    mask-image: radial-gradient(ellipse at center, #000 30%, transparent 75%);
+    -webkit-mask-image: radial-gradient(ellipse at center, #000 30%, transparent 75%);
+  }
+  /* 扫描线 */
+  .stage::after {
+    content: '';
+    position: absolute; inset: 0;
+    background: repeating-linear-gradient(0deg, rgba(0,0,0,.14) 0 1px, transparent 1px 3px);
+    pointer-events: none;
+  }
+  /* 四角括号 */
+  .corner { position: absolute; width: 26px; height: 26px; border-color: rgba(0,229,255,.8); border-style: solid; border-width: 0; }
+  .c1 { top: 14px; left: 14px;  border-top-width: 2px; border-left-width: 2px; }
+  .c2 { top: 14px; right: 14px; border-top-width: 2px; border-right-width: 2px; }
+  .c3 { bottom: 14px; left: 14px;  border-bottom-width: 2px; border-left-width: 2px; }
+  .c4 { bottom: 14px; right: 14px; border-bottom-width: 2px; border-right-width: 2px; }
+
+  .logo {
+    position: relative;
+    font-size: 92px;
+    font-weight: 900;
+    letter-spacing: 18px;
+    text-indent: 18px; /* 抵消最后一字的字距 */
+    color: #eafcff;
+    animation: flicker 2s steps(1) infinite, breathe 2s ease-in-out infinite;
+  }
+  .logo::after { /* 青色霓虹光 */
+    content: '梓安';
+    position: absolute; inset: 0;
+    color: #00e5ff;
+    z-index: -1;
+    filter: blur(14px);
+    animation: flicker 2s steps(1) infinite;
+  }
+  .logo::before { /* 品红衬光 */
+    content: '梓安';
+    position: absolute; inset: 0;
+    color: #ff2bd6;
+    z-index: -2;
+    filter: blur(26px);
+    animation: flicker 2s steps(1) infinite;
+  }
+  @keyframes flicker {
+    0%   { opacity: 1; }
+    7%   { opacity: 1; }
+    8%   { opacity: .18; }
+    9%   { opacity: 1; }
+    11%  { opacity: .35; }
+    12%  { opacity: 1; }
+    46%  { opacity: 1; }
+    47%  { opacity: .22; }
+    48%  { opacity: 1; }
+    70%  { opacity: 1; }
+    71%  { opacity: .4; }
+    72%  { opacity: 1; }
+    100% { opacity: 1; }
+  }
+  @keyframes breathe {
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.035); }
+  }
+  .sub {
+    margin-top: 10px;
+    font-size: 12px;
+    letter-spacing: 8px;
+    text-indent: 8px;
+    color: rgba(0, 229, 255, .75);
+    text-transform: uppercase;
+    animation: subGlow 2s ease-in-out infinite;
+  }
+  @keyframes subGlow {
+    0%, 100% { opacity: .55; text-shadow: 0 0 6px rgba(0,229,255,.5); }
+    50%      { opacity: 1;   text-shadow: 0 0 14px rgba(0,229,255,.9); }
+  }
+  .bar-wrap {
+    margin-top: 26px;
+    width: 240px;
+    height: 3px;
+    background: rgba(0, 229, 255, .15);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .bar {
+    height: 100%;
+    width: 0;
+    background: linear-gradient(90deg, #00e5ff, #ff2bd6);
+    box-shadow: 0 0 10px rgba(0, 229, 255, .9);
+    animation: load 2s cubic-bezier(.3,.8,.4,1) forwards;
+  }
+  @keyframes load { to { width: 100%; } }
+  .tip {
+    margin-top: 12px;
+    font-size: 11px;
+    color: rgba(160, 220, 255, .5);
+    letter-spacing: 2px;
+  }
+</style>
+</head>
+<body>
+  <div class="stage">
+    <span class="corner c1"></span><span class="corner c2"></span>
+    <span class="corner c3"></span><span class="corner c4"></span>
+    <div class="logo">梓安</div>
+    <div class="sub">ZIAN TOOLBOX</div>
+    <div class="bar-wrap"><div class="bar"></div></div>
+    <div class="tip">正在初始化 ADB 环境 …</div>
+  </div>
+</body>
+</html>
