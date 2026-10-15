@@ -2,6 +2,11 @@ $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 $origAsar = Join-Path $root 'resources\app.asar.bak'   # original (source of truth)
 $outAsar  = Join-Path $root 'resources\app.asar'
+# 备份不存在时回退到现有 app.asar（先整读入内存再写回，安全）
+if (-not (Test-Path $origAsar)) {
+  $origAsar = $outAsar
+  Write-Host 'app.asar.bak not found, fallback to app.asar'
+}
 $newCssPath = Join-Path $root 'resources\app.asar.unpacked\style.css'
 
 $bytes = [System.IO.File]::ReadAllBytes($origAsar)

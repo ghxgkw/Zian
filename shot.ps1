@@ -6,7 +6,12 @@ $wsUrl = $page.webSocketDebuggerUrl
 
 $ws = New-Object System.Net.WebSockets.ClientWebSocket
 $cts = New-Object System.Threading.CancellationTokenSource(15000)
-$ws.ConnectAsync([Uri]$wsUrl, $cts.Token).Wait()
+try {
+  $ws.ConnectAsync([Uri]$wsUrl, $cts.Token).Wait()
+} catch {
+  Write-Host ('CONNECT_FAILED: ' + $_.Exception.GetBaseException().Message)
+  exit 1
+}
 
 $payload = @{
   id = 1
@@ -16,15 +21,25 @@ $payload = @{
 
 $bytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
 $seg = New-Object System.ArraySegment[byte] $bytes, 0, $bytes.Length
-$ws.SendAsync($seg, [System.Net.WebSockets.WebSocketMessageType]::Text, $true, $cts.Token).Wait()
+try {
+  $ws.SendAsync($seg, [System.Net.WebSockets.WebSocketMessageType]::Text, $true, $cts.Token).Wait()
+} catch {
+  Write-Host ('SEND_FAILED: ' + $_.Exception.GetBaseException().Message)
+  exit 1
+}
 
 $buf = New-Object byte[] 16000000
 $recvSeg = New-Object System.ArraySegment[byte] $buf, 0, $buf.Length
 $ms = New-Object System.IO.MemoryStream
-do {
-  $res = $ws.ReceiveAsync($recvSeg, $cts.Token).Result
-  $ms.Write($buf, 0, $res.Count)
-} while (-not $res.EndOfMessage)
+try {
+  do {
+    $res = $ws.ReceiveAsync($recvSeg, $cts.Token).Result
+    $ms.Write($buf, 0, $res.Count)
+  } while (-not $res.EndOfMessage)
+} catch {
+  Write-Host ('RECV_FAILED: ' + $_.Exception.GetBaseException().Message)
+  exit 1
+}
 $respStr = [System.Text.Encoding]::UTF8.GetString($ms.ToArray())
 $resp = $respStr | ConvertFrom-Json
 $ws.CloseAsync([System.Net.WebSockets.WebSocketCloseStatus]::NormalClosure, 'done', $cts.Token).Wait()

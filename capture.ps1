@@ -22,11 +22,18 @@ $cr = New-Object Win+RECT
 $w = $cr.R - $cr.L; $hgt = $cr.B - $cr.T
 Write-Host ('client ' + $w + 'x' + $hgt)
 
-$bmp = New-Object System.Drawing.Bitmap $w, $hgt
-$g = [System.Drawing.Graphics]::FromImage($bmp)
-$hdc = $g.GetHdc()
-[void][Win]::PrintWindow($hwnd, $hdc, 2)
-$g.ReleaseHdc($hdc)
-$out = Join-Path $root 'cap.png'
-$bmp.Save($out)
-Write-Host ('saved ' + $out)
+$bmp = $null
+$g = $null
+try {
+  $bmp = New-Object System.Drawing.Bitmap $w, $hgt
+  $g = [System.Drawing.Graphics]::FromImage($bmp)
+  $hdc = $g.GetHdc()
+  [void][Win]::PrintWindow($hwnd, $hdc, 2)
+  $g.ReleaseHdc($hdc)
+  $out = Join-Path $root 'cap.png'
+  $bmp.Save($out)
+  Write-Host ('saved ' + $out)
+} finally {
+  if ($g) { $g.Dispose() }
+  if ($bmp) { $bmp.Dispose() }
+}
