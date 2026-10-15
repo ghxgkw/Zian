@@ -1,0 +1,58 @@
+# ===== 运行时数据 =====
+Log/
+Screenshots/
+Synced/
+ApkExt/
+
+# ===== 测试与调试产物 =====
+shot.png
+cap.png
+err*.txt
+out*.txt
+app.asar.test
+*.test
+
+# ===== 构建产物 =====
+*.exe
+*.dll
+*.dat
+*.pak
+*.bin
+resources/app.asar
+resources/app.asar.bak
+resources/app.asar.unpacked/tmp/
+resources/app.asar.unpacked/node_modules/
+apk-src/app.apk
+apk-src/debug.keystore
+
+# ===== 第三方二进制工具（体积大，不入库，使用时自备） =====
+resources/adb/
+resources/scrcpy/
+resources/ffmpeg/
+
+# ===== Electron 运行时（根目录） =====
+*.exe.bak
+icudtl.dat
+LICENSES.chromium.html
+libEGL.dll
+libGLESv2.dll
+d3dcompiler_47.dll
+ffmpeg.dll
+vulkan-1.dll
+vk_swiftshader.dll
+resources.pak
+snapshot_blob.bin
+v8_context_snapshot.bin
+chrome_*.pak
+
+# ===== IDE / 编辑器 =====
+.trae/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ===== 系统 =====
+Thumbs.db
+.DS_Store
+desktop.ini
