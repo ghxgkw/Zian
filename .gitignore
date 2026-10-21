@@ -59,3 +59,4 @@ Thumbs.db
 desktop.ini
 _backup/
 node_modules/
+_build/upload/
