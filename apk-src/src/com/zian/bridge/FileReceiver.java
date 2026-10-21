@@ -10,14 +10,16 @@ import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.Semaphore;
 
 /**
  * 文件接收 raw TCP 服务（端口 35792）。
  *
  * 协议：
- *   第1行：目标目录绝对路径
- *   第2行：文件名
- *   第3行：长度（字节，long）
+ *   第1行：配对令牌（Pairing.token，32 位小写十六进制；不符立刻断开）
+ *   第2行：目标目录绝对路径
+ *   第3行：文件名
+ *   第4行：长度（字节，long）
  *   接着是 raw 字节流，长度满后服务端返回 "OK\n" 或 "ERR xxx\n"
  *
  * 行读取用自己实现的 readLine（逐字节读直到 \n），避免 BufferedReader 缓存丢字节。
@@ -25,8 +27,13 @@ import java.nio.charset.StandardCharsets;
  */
 public class FileReceiver {
 
-    private static final int PORT = 35792;
+    /** 同时处理的连接上限 */
+    private static final int MAX_CONN = 4;
+    /** 单次传输上限 4GiB（同时防止协议首行给出荒谬长度后无限写盘） */
+    private static final long MAX_LEN = 4L * 1024 * 1024 * 1024;
+
     private final Context ctx;
+    private final Semaphore slots = new Semaphore(MAX_CONN);
     private ServerSocket server;
     private volatile boolean running = false;
 
@@ -46,7 +53,7 @@ public class FileReceiver {
 
     private void loop() {
         try {
-            server = new ServerSocket(PORT);
+            server = new ServerSocket(Constants.PORT_FILE);
             server.setSoTimeout(2000);
         } catch (Exception e) {
             e.printStackTrace();
@@ -63,14 +70,30 @@ public class FileReceiver {
                 continue;
             }
             final Socket socket = s;
-            new Thread(() -> handle(socket), "FileReceiver-conn").start();
+            if (!slots.tryAcquire()) {
+                try { writeResp(socket, "ERR busy\n"); } catch (Exception e) {}
+                try { socket.close(); } catch (Exception e) {}
+                continue;
+            }
+            new Thread(() -> {
+                try { handle(socket); } finally { slots.release(); }
+            }, "FileReceiver-conn").start();
         }
     }
 
     private void handle(Socket socket) {
         try {
+            // 局域网暂停时（仅 USB 可用）：非回环连接直接断开
+            if (BridgeService.sLanPaused && socket.getInetAddress() != null
+                    && !socket.getInetAddress().isLoopbackAddress()) {
+                writeResp(socket, "ERR lan paused\n");
+                return;
+            }
             socket.setSoTimeout(60000);
             InputStream in = socket.getInputStream();
+            // 令牌校验：不符立刻断开，不读后续数据
+            String tokenLine = readLine(in);
+            if (tokenLine == null || !Pairing.token(ctx).equals(tokenLine.trim())) return;
             String dirOrPath = readLine(in);
             String name = readLine(in);
             String lenStr = readLine(in);
@@ -83,9 +106,25 @@ public class FileReceiver {
                 writeResp(socket, "ERR bad length\n");
                 return;
             }
+            if (length < 0 || length > MAX_LEN) {
+                writeResp(socket, "ERR too large\n");
+                return;
+            }
             File dirFile = new File(dirOrPath);
             if (!dirFile.exists()) dirFile.mkdirs();
-            File dst = new File(dirFile, name);
+            // 防路径穿越：文件名只取末段，且目标 canonical 路径必须落在目标目录内
+            String safeName = new File(name).getName();
+            if (safeName.isEmpty() || ".".equals(safeName) || "..".equals(safeName)) {
+                writeResp(socket, "ERR bad name\n");
+                return;
+            }
+            String dirRoot = dirFile.getCanonicalPath();
+            File dst = new File(dirFile, safeName);
+            String dstCanon = dst.getCanonicalPath();
+            if (!dstCanon.startsWith(dirRoot + File.separator)) {
+                writeResp(socket, "ERR path escape\n");
+                return;
+            }
             long total = 0;
             byte[] buf = new byte[1 << 16];
             try (FileOutputStream out = new FileOutputStream(dst)) {
@@ -108,7 +147,7 @@ public class FileReceiver {
 
     /** 逐字节读取直到 \n，不缓存多余字节，剩余 raw 字节仍在 InputStream 中。 */
     private String readLine(InputStream in) throws Exception {
-        ByteArrayOutputStream2 buf = new ByteArrayOutputStream2();
+        java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
         int c;
         while ((c = in.read()) != -1) {
             if (c == '\n') break;
@@ -123,25 +162,5 @@ public class FileReceiver {
         OutputStream os = socket.getOutputStream();
         os.write(msg.getBytes(StandardCharsets.UTF_8));
         os.flush();
-    }
-
-    /** 内部简化版 ByteArrayOutputStream（避免 import）。 */
-    private static class ByteArrayOutputStream2 {
-        private byte[] buf = new byte[256];
-        private int count = 0;
-        void write(int b) {
-            if (count == buf.length) {
-                byte[] nb = new byte[buf.length * 2];
-                System.arraycopy(buf, 0, nb, 0, count);
-                buf = nb;
-            }
-            buf[count++] = (byte) b;
-        }
-        int size() { return count; }
-        byte[] toByteArray() {
-            byte[] r = new byte[count];
-            System.arraycopy(buf, 0, r, 0, count);
-            return r;
-        }
     }
 }

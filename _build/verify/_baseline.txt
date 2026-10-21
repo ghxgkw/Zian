@@ -1,0 +1,11 @@
+wm_size = Physical size: 1080x2400
+wm_density = Physical density: 480
+font_scale = 1.0
+window_animation_scale = 1.0
+transition_animation_scale = 1.0
+animator_duration_scale = 1.0
+screen_off_timeout = 600000
+secure_icon_blacklist = null
+global_icon_blacklist = null
+policy_control = null
+disabled_packages = Error: Shell does not have permission to access user 666 | package:com.vivo.base.player | package:com.vivo.base.vtouch | package:com.google.android.projection.gearhead | package:com.android.virtualization.terminal | package:com.android.devicelockcontroller | package:com.vivo.ai.base.copilot | package:com.vivo.base.gallery

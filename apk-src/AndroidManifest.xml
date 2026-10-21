@@ -1,20 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.zian.bridge">
+    package="com.zian.bridge"
+    android:versionCode="1"
+    android:versionName="1.0">
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
-        android:maxSdkVersion="28" />
+        android:maxSdkVersion="32" />
+    <!-- 无需 wifi 硬件：ACCESS_WIFI_STATE 已移除，这里显式声明为可选，避免无 wifi 设备装不上 -->
+    <uses-feature android:name="android.hardware.wifi" android:required="false" />
     <!-- 所有文件访问：文件同步需要读写任意文件（Android 11+） -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage"
@@ -41,6 +42,15 @@
             </intent-filter>
         </activity>
 
+        <!-- 借焦点一次性读剪贴板：1x1 透明、不入最近任务，仅由 /clipboard/pull 的通知点击拉起 -->
+        <activity
+            android:name=".ClipReadActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity="com.zian.bridge.clip"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <service
             android:name=".BridgeService"
             android:foregroundServiceType="dataSync"
@@ -51,10 +61,15 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
                 <action android:name="android.intent.action.USER_PRESENT" />
             </intent-filter>
         </receiver>
+
+        <provider
+            android:name=".BridgeFileProvider"
+            android:authorities="com.zian.bridge.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true" />
 
     </application>
 </manifest>

@@ -3,6 +3,7 @@ Log/
 Screenshots/
 Synced/
 ApkExt/
+links.json
 
 # ===== 测试与调试产物 =====
 shot.png
@@ -56,3 +57,5 @@ chrome_*.pak
 Thumbs.db
 .DS_Store
 desktop.ini
+_backup/
+node_modules/

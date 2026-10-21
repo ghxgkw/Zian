@@ -181,7 +181,6 @@ public class FileHelper {
     }
 
     private static String esc(String s) {
-        if (s == null) return "";
-        return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ").replace("\r", " ");
+        return JsonUtil.esc(s);
     }
 }

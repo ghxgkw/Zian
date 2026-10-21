@@ -6,14 +6,23 @@ const api = window.zian;
 let currentSerial = null;
 let currentLink = null;   // 局域网设备 {ip, port, name, model, brand, ver}
 let devList = [];
-let paths = null;
 
 // ---------- 本地设置 ----------
+// 设置损坏时回退默认值并清掉坏数据：JSON.parse 在模块求值阶段抛错会让整个渲染层停摆
+function readSET() {
+  try {
+    const v = JSON.parse(localStorage.getItem('zian_settings') || '{}');
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+  } catch {
+    try { localStorage.removeItem('zian_settings'); } catch {}
+    return {};
+  }
+}
 const SET = Object.assign({
   startView: 'home', cpuInterval: 1000, pushPath: '/sdcard/', allowDowngrade: false,
   termClearInput: false, termClearOutput: false, shotPush: true, theme: 'dark',
   viewAnim: true, viewAnimDur: 240, linkMode: 'auto'
-}, JSON.parse(localStorage.getItem('zian_settings') || '{}'));
+}, readSET());
 // 旧版设置迁移：默认改为深邃蓝黑主题（仅一次，之后尊重用户切换）
 if (!localStorage.getItem('zian_theme_migrated_v2')) {
   SET.theme = 'dark';
@@ -53,7 +62,31 @@ function appendOut(sel, text) {
   el.textContent = (el.textContent + '\n' + text).split('\n').slice(-300).join('\n');
   el.scrollTop = el.scrollHeight;
 }
-function esc(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML.replace(/"/g, '&quot;'); }
+// 属性/文本转义：DOM 序列化只会处理 & < >，引号（含单引号）需自己转，否则单引号属性会被咬断
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s == null ? '' : String(s);
+  return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+// 悬停浮层内容：全程 textContent / createTextNode 拼装，任何输入都只能变成文本节点
+function fillTip(tip, metaJson) {
+  let d = null;
+  try { d = JSON.parse(metaJson || ''); } catch { d = null; }
+  tip.textContent = '';
+  if (!d) return false;
+  const name = document.createElement('div');
+  name.className = 't-name';
+  name.textContent = d.n || '';
+  tip.appendChild(name);
+  [['大小', d.s], ['修改', d.m], ['路径', d.p]].forEach(([k, v]) => {
+    const b = document.createElement('b');
+    b.textContent = k;
+    tip.appendChild(b);
+    tip.appendChild(document.createTextNode(' ' + (v || '—')));
+    tip.appendChild(document.createElement('br'));
+  });
+  return true;
+}
 
 // ---------- 导航 ----------
 $$('.nav-item').forEach((btn) => {
@@ -115,6 +148,7 @@ async function refreshDevices(silent = true) {
   sel.innerHTML = devList.length
     ? devList.map((d) => `<option value="${esc(d.serial)}" ${d.serial === currentSerial ? 'selected' : ''}>${esc((d.model ? d.model + ' · ' : '') + d.serial)}</option>`).join('')
     : '<option value="">无设备</option>';
+  syncMirrorSelect();
 }
 $('#dev-select').addEventListener('change', (e) => { currentSerial = e.target.value || null; refreshDevices(); });
 $('#btn-dev-refresh').onclick = async () => { await refreshDevices(false); toast(devList.length ? `发现 ${devList.length} 台设备` : '未发现设备', !devList.length); };
@@ -270,23 +304,80 @@ const GAPPS = {
 };
 $('#gapps-grid').innerHTML = Object.keys(GAPPS).map((n) =>
   `<label><input type="checkbox" data-gapp="${GAPPS[n]}">${n}</label>`).join('');
+// 本应用禁用过的 Google 组件清单：跨重启保留（否则重启后无法一键恢复），
+// 存 localStorage 与 SET 同机制——不加新文件、不需要额外权限，随用户配置一起走
+const GAPPS_DISABLED_KEY = 'zian_disabled_gapps';
+function loadDisabledGapps() {
+  try {
+    const v = JSON.parse(localStorage.getItem(GAPPS_DISABLED_KEY) || '[]');
+    return Array.isArray(v) ? v.filter((p) => typeof p === 'string' && p) : [];
+  } catch { return []; }
+}
+function saveDisabledGapps(arr) {
+  try {
+    const uniq = [...new Set(arr)];
+    if (uniq.length) localStorage.setItem(GAPPS_DISABLED_KEY, JSON.stringify(uniq));
+    else localStorage.removeItem(GAPPS_DISABLED_KEY);
+  } catch {}
+  setRestoreBtn();
+}
+function setRestoreBtn() {
+  const btn = $('#btn-gapps-restore');
+  if (!btn) return;
+  const n = loadDisabledGapps().length;
+  btn.disabled = !n;
+  btn.textContent = n ? '批量恢复（' + n + '）' : '批量恢复';
+}
+/** 禁用前的确认文案：逐行列出完整包名 + 影响提示 */
+function gappsDisableConfirm(pkgs) {
+  return [
+    '即将禁用 ' + pkgs.length + ' 个 Google 系统组件：',
+    '',
+    pkgs.join('\n'),
+    '',
+    '影响：这些组件在手机上停止运行；禁用 GMS/GSF/商店 后，依赖 Google 服务的应用可能闪退或提示「设备不支持」。',
+    '本应用会记住这次禁用的清单，可用「批量恢复」一键启用回来。',
+    '',
+    '确认继续？'
+  ].join('\n');
+}
 async function gappsBatch(disable) {
   if (!needDevice()) return;
   const checked = $$('#gapps-grid input:checked');
   if (!checked.length) return toast('请先勾选要操作的套件', true);
+  const pkgs = [...checked].map((c) => c.dataset.gapp);
+  if (disable && !confirm(gappsDisableConfirm(pkgs))) return toast('已取消，未执行任何操作');
   const cmd = disable ? 'pm disable-user --user 0' : 'pm enable';
   const results = [];
-  for (const c of checked) {
-    const pkg = c.dataset.gapp;
-    const r = await api.cmdRun(currentSerial, `${cmd} ${pkg}`);
-    const ok = disable ? r.code === 0 : /Success|^$/i.test((r.out || '').trim());
-    results.push(`${pkg}: ${(r.out || r.err || '').trim().split('\n').pop() || (disable ? '已禁用' : '已启用')}`);
+  const doneOk = [];
+  for (const pkg of pkgs) {
+    const r = await api.cmdRun(currentSerial, cmd + ' ' + pkg);
+    const out = ((r.out || '') + (r.err || '')).trim();
+    const ok = r.code === 0 && !/Exception|Failure|Error|not found/i.test(out);
+    if (ok) doneOk.push(pkg);
+    results.push(pkg + ': ' + (out.split('\n').pop() || (ok ? (disable ? '已禁用' : '已启用') : '失败')));
   }
-  appLog(`[Google套件${disable ? '禁用' : '启用'}]\n` + results.join('\n'));
-  toast('批量操作完成，详见操作记录');
+  if (disable) saveDisabledGapps(loadDisabledGapps().concat(doneOk));
+  else saveDisabledGapps(loadDisabledGapps().filter((p) => doneOk.indexOf(p) < 0));
+  appLog('[Google套件' + (disable ? '禁用' : '启用') + ']\n' + results.join('\n'));
+  toast('批量操作完成（成功 ' + doneOk.length + '/' + pkgs.length + '），详见操作记录', doneOk.length !== pkgs.length);
 }
 $('#btn-gapps-disable').onclick = () => gappsBatch(true);
 $('#btn-gapps-enable').onclick = () => gappsBatch(false);
+$('#btn-gapps-restore').onclick = async () => {
+  if (!needDevice()) return;
+  const list = loadDisabledGapps();
+  if (!list.length) return toast('没有本应用禁用过的组件需要恢复', true);
+  if (!confirm('将重新启用本应用禁用过的 ' + list.length + ' 个组件：\n\n' + list.join('\n') + '\n\n确认继续？')) return;
+  const r = await api.gappsRestore(currentSerial, list);
+  const rows = Array.isArray(r.results) ? r.results : [];
+  appLog('[Google套件批量恢复]\n' + rows.map((x) => x.pkg + ': ' + (x.ok ? '已启用' : '失败 · ' + x.msg)).join('\n'));
+  // 只清掉真正恢复成功的；失败的留在清单里，用户还能再点一次
+  saveDisabledGapps(rows.filter((x) => !x.ok).map((x) => x.pkg));
+  const okCount = rows.filter((x) => x.ok).length;
+  toast('恢复完成：成功 ' + okCount + '/' + rows.length + (okCount < rows.length ? '，失败 ' + (rows.length - okCount) : ''), okCount !== rows.length);
+};
+setRestoreBtn();
 
 // ============ 显示控制 ============
 async function refreshDisplay() {
@@ -595,8 +686,45 @@ $$('[data-ins]').forEach((b) => {
     ed.scrollTop = ed.scrollHeight;
   };
 });
+// 内联脚本名输入：Electron 不支持 window.prompt（返回 undefined），必须用页面内输入
+let scriptNameResolve = null;
+function askScriptName(title) {
+  const row = $('#script-name-row');
+  const input = $('#script-name-input');
+  $('#script-name-hint').textContent = title || '';
+  input.value = '';
+  row.style.display = 'flex';
+  input.focus();
+  return new Promise((resolve) => { scriptNameResolve = resolve; });
+}
+function closeScriptName(value) {
+  const row = $('#script-name-row');
+  if (row) row.style.display = 'none';
+  const resolve = scriptNameResolve;
+  scriptNameResolve = null;
+  if (resolve) resolve(value);
+}
+function initScriptNameBar() {
+  const row = $('#script-name-row');
+  const input = $('#script-name-input');
+  if (!row || !input) return;
+  const submit = () => {
+    const v = String(input.value || '').trim();
+    if (!v) { $('#script-name-hint').textContent = '脚本名不能为空'; input.focus(); return; }
+    closeScriptName(v);
+  };
+  const cancel = () => closeScriptName(null);
+  $('#btn-script-name-ok').onclick = submit;
+  $('#btn-script-name-cancel').onclick = cancel;
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); submit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+  });
+}
+initScriptNameBar();
+
 $('#btn-script-new').onclick = async () => {
-  let name = prompt('新建脚本名（留空取消，自动补 .bat）：');
+  let name = await askScriptName('新建脚本名（回车确定 / Esc 取消，自动补 .bat）');
   if (!name) return;
   if (!/\.(bat|cmd|txt)$/i.test(name)) name += '.bat';
   const r = await api.scriptSave(name, '# 新脚本\n');
@@ -614,30 +742,34 @@ async function runScript(name, content) {
   showOut('#cmd-out', `▶ 运行脚本 ${name}（${lines.length} 条指令）`);
   const autoDelay = $('#script-autodelay').checked;
   let idx = 0, fail = 0;
-  for (const line of lines) {
-    idx++;
-    const m = line.match(/^delay\s+(\d+)$/i);
-    if (m) {
-      appendOut('#cmd-out', `[${idx}/${lines.length}] 等待 ${m[1]}ms …`);
-      await new Promise((res) => setTimeout(res, Math.min(60000, parseInt(m[1]))));
-      continue;
+  // finally 兜底：中途抛错（设备掉线等）否则 scriptRunning 永远为 true，之后所有脚本都跑不了
+  try {
+    for (const line of lines) {
+      idx++;
+      const m = line.match(/^delay\s+(\d+)$/i);
+      if (m) {
+        appendOut('#cmd-out', `[${idx}/${lines.length}] 等待 ${m[1]}ms …`);
+        await new Promise((res) => setTimeout(res, Math.min(60000, parseInt(m[1]))));
+        continue;
+      }
+      const r = await api.cmdRun(currentSerial, line);
+      const out = ((r.out || '') + (r.err || '')).trim();
+      appendOut('#cmd-out', `[${idx}/${lines.length}] $ ${line}\n${out || '（成功，无输出）'}`);
+      if (r.code !== 0) fail++;
+      if (autoDelay) await new Promise((res) => setTimeout(res, 300));
     }
-    const r = await api.cmdRun(currentSerial, line);
-    const out = ((r.out || '') + (r.err || '')).trim();
-    appendOut('#cmd-out', `[${idx}/${lines.length}] $ ${line}\n${out || '（成功，无输出）'}`);
-    if (r.code !== 0) fail++;
-    if (autoDelay) await new Promise((res) => setTimeout(res, 300));
+    appendOut('#cmd-out', `✔ 脚本执行完毕${fail ? `（${fail} 条失败）` : ''}`);
+    toast(fail ? `脚本执行完毕，${fail} 条失败` : '脚本执行完毕', !!fail);
+  } finally {
+    scriptRunning = false;
   }
-  appendOut('#cmd-out', `✔ 脚本执行完毕${fail ? `（${fail} 条失败）` : ''}`);
-  toast(fail ? `脚本执行完毕，${fail} 条失败` : '脚本执行完毕', !!fail);
-  scriptRunning = false;
 }
 $('#btn-script-run').onclick = async () => {
   const content = $('#script-editor').value;
   if (!content.trim()) return toast('脚本内容为空', true);
   let name = curScript;
   if (!name) {
-    name = prompt('保存脚本名（自动补 .bat）：');
+    name = await askScriptName('保存脚本名（回车确定 / Esc 取消，自动补 .bat）');
     if (!name) return;
     if (!/\.(bat|cmd|txt)$/i.test(name)) name += '.bat';
     curScript = name;
@@ -657,7 +789,10 @@ $('#btn-term-run').onclick = async () => {
   termPrint(`$ adb ${cmd}`);
   if (SET.termClearInput) $('#term-input').value = '';
   const parts = cmd.split(/\s+/);
-  const useSerial = currentSerial && parts[0] === 'shell';
+  // 统一注入 -s：多设备下 install/push/pull 不带 serial 会直接报 "more than one device"。
+  // 只有 adb 的 host 级命令不接受 -s（它们不需要 transport）
+  const HOST_CMDS = ['pair', 'connect', 'disconnect', 'devices', 'kill-server', 'start-server', 'reconnect', 'version', 'help'];
+  const useSerial = currentSerial && !HOST_CMDS.includes(parts[0]);
   const r = await api.adbRun(parts, useSerial ? currentSerial : null);
   termPrint(((r.out || '') + (r.err || '')).trimEnd() || '（无输出）');
 };
@@ -670,7 +805,7 @@ $('#btn-logcat').onclick = async () => {
   toast('日志流已开启');
 };
 $('#btn-logcat-stop').onclick = async () => { await api.logcatStop(); toast('日志流已停止'); };
-$('#btn-logcat-clear').onclick = () => { $('#logcat-view').textContent = ''; };
+$('#btn-logcat-clear').onclick = () => { logBuf = []; $('#logcat-view').textContent = ''; };
 let logBuf = [], logRenderPending = false;
 function renderLog() {
   if (logRenderPending) return;
@@ -762,12 +897,15 @@ api.adbRun(['devices']).then((r) => termPrint((((r.out || '') + (r.err || '')).t
     `Main: ${p.versions.main}<br>ADB: ${adbLine || '?'}<br>Electron: ${p.versions.electron}<br>Node: ${p.versions.node}`;
 })();
 refreshDevices();
-setInterval(() => refreshDevices(), 4000);
+const devTimer = setInterval(() => refreshDevices(), 4000);
+// 窗口卸载时清掉所有轮询定时器（此前从未清理）
+window.addEventListener('beforeunload', () => {
+  clearInterval(devTimer);
+  clearInterval(cpuTimer);
+  stopInterTimers();
+});
 startCpuTimer();
 loadScripts();
-// 默认启动页
-const startBtn = document.querySelector(`.nav-item[data-view="${SET.startView}"]`);
-if (startBtn && SET.startView !== 'home') startBtn.click();
 
 // ============ 互联 ============
 let initedInter = false;
@@ -775,12 +913,17 @@ let linkList = [];
 let curFileTab = 'recent';
 let curDir = '';
 let clipWatching = false;
-let interDevTimer = null;
+let clipUserStopped = false;   // 用户主动关过：心跳不得自动重启，直到用户手动开启或连上新设备
+let clipPulling = false;       // 「从手机读剪贴板」进行中（按钮禁用 + 进度文案）
+let focusHintShownAt = 0;      // focusRequired 提示限流时间戳（与主进程双保险，防止每秒刷状态行）
+let tapHintShownAt = 0;        // 「请在手机上点一下通知」提示限流时间戳
+const CLIP_POLL_MS = 1000;         // 拉取轮询间隔
+const CLIP_POLL_TIMEOUT_MS = 15000; // 拉取最长等待
+const CLIP_FOCUS_HINT = '手机端后台读不到剪贴板，点「从手机读剪贴板」或让互联桥在前台';
+const CLIP_TAP_HINT = '手机端拦下了后台读取，请在手机上点一下通知';
 let interHeartbeat = null;   // 心跳：5s ping 当前设备 + 更新设备卡
-let interFilesAuto = null;   // 文件自动刷新：10s
 let fmView = 'grid';          // grid | list
 let fmSearchText = '';
-let fileCounts = {};          // 各分类计数
 let catCache = {};            // 分类 -> 文件数组（用于"最近文件"合并与计数）
 let linkOk = false;           // 当前连接是否存活（心跳维护）
 let linkLatency = 0;          // 最近一次 ping 延迟 ms
@@ -788,6 +931,47 @@ let linkLatency = 0;          // 最近一次 ping 延迟 ms
 function needLink() {
   if (!currentLink) { toast('请先连接局域网设备', true); return false; }
   return true;
+}
+
+/** 配对行：未配对时显示（USB 连接会自动配对，通常看不到） */
+function setPairRowVisible() {
+  const row = $('#ic-pair-row');
+  if (!row) return;
+  row.style.display = (currentLink && !currentLink.paired) ? 'flex' : 'none';
+}
+
+async function pairWithCode() {
+  if (!currentLink) return toast('请先连接设备', true);
+  const code = ($('#ic-pair-input').value || '').trim();
+  if (!/^[0-9a-fA-F]{32}$/.test(code)) return toast('配对码应为手机 App 上显示的 32 位十六进制', true);
+  const r = await api.netPair(currentLink, code);
+  if (!r.ok) return toast(r.msg || '配对失败', true);
+  currentLink.paired = true;
+  $('#ic-pair-input').value = '';
+  setPairRowVisible();
+  linkOk = true;
+  updateLinkUI();
+  toast('配对成功，鉴权通道已建立');
+  loadFiles(true);
+}
+
+/** 单次 ping：返回 {info, latency}，失败返回 null */
+async function pingOnce(link) {
+  const start = Date.now();
+  try {
+    const r = await fetch(`http://${link.ip}:${link.port}/ping`, { method: 'GET', signal: AbortSignal.timeout(2500) });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return { info: j, latency: Date.now() - start };
+  } catch { return null; }
+}
+
+/** 刷新四个分类的 tab 计数（0 显示为空） */
+function setCatCounts() {
+  $('#cnt-images').textContent = (catCache.images || []).length || '';
+  $('#cnt-videos').textContent = (catCache.videos || []).length || '';
+  $('#cnt-music').textContent = (catCache.music || []).length || '';
+  $('#cnt-docs').textContent = (catCache.docs || []).length || '';
 }
 
 async function initInterconnect() {
@@ -805,16 +989,12 @@ async function initInterconnect() {
       try {
         if (currentLink) {
           // 手动 ping 一次
-          const start = Date.now();
-          try {
-            const r = await fetch(`http://${currentLink.ip}:${currentLink.port}/ping`, { signal: AbortSignal.timeout(2500) });
-            if (r.ok) {
-              const j = await r.json();
-              linkLatency = Date.now() - start;
-              linkOk = true;
-              if (j.fg !== undefined) currentLink.fg = j.fg;
-            } else { linkOk = false; }
-          } catch { linkOk = false; }
+          const p = await pingOnce(currentLink);
+          if (p) {
+            linkLatency = p.latency;
+            linkOk = true;
+            if (p.info.fg !== undefined) currentLink.fg = p.info.fg;
+          } else { linkOk = false; }
           updateLinkUI();
           // 刷新文件列表
           await loadFiles(true);
@@ -835,11 +1015,20 @@ async function initInterconnect() {
       const dev = linkList.find((d) => (d.ip + '|' + (d.port||35791) + '|' + (d.usb?'usb':'lan')) === key);
       if (!dev) return;
       const r = await api.netConnect(dev.ip, dev.port, { usb: !!dev.usb, serial: dev.serial });
-      if (r.ok) { currentLink = r.link; toast(`已连接 ${currentLink.name}`); updateLinkUI(); }
+      if (r.ok) { currentLink = r.link; clipUserStopped = false; toast(`已连接 ${currentLink.name}`); updateLinkUI(); }
       else toast(r.msg, true);
     });
 
     // 超级剪贴板：点击卡片开关
+    $('#btn-ic-pair').onclick = pairWithCode;
+    $('#ic-pair-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') pairWithCode(); });
+    // 401：不得静默重试，直接让用户输入配对码
+    api.onNetUnauthorized(() => {
+      toast('设备要求配对码：请输入手机 App 上显示的 32 位配对码', true);
+      if ($('#ic-dev-sub')) $('#ic-dev-sub').textContent = '需要配对：请输入手机 App 上显示的配对码';
+      setPairRowVisible();
+    });
+
     $('#card-clip').onclick = toggleClipWatch;
     $('#btn-clip-pull').onclick = async () => {
       if (!needLink()) return;
@@ -848,6 +1037,7 @@ async function initInterconnect() {
       applyRemoteClipboard(r, true);
       toast('已拉取');
     };
+    $('#btn-clip-pull-focus').onclick = pullClipFromPhone;
     $('#btn-clip-push').onclick = async () => {
       if (!needLink()) return;
       const r = await api.clipboardSet(currentLink, null);
@@ -918,8 +1108,11 @@ async function initInterconnect() {
       if (pct >= 100) setTimeout(() => $('#files-progress-bar').classList.add('hidden'), 800);
     });
     api.onClipboardRemote((p) => applyRemoteClipboard(p, false)); // 静默同步，不弹提示
+    api.onClipboardFocusRequired(() => showFocusRequiredHint()); // 主进程已限流，这里再兜一层
+    api.onClipboardTapRequired(() => showTapRequiredHint());
     api.onNetAutoconnected((link) => {
       currentLink = link;
+      clipUserStopped = false;
       updateLinkUI();
       toast(`自动连接: ${link.name}`);
     });
@@ -936,6 +1129,7 @@ async function initInterconnect() {
       usbReconnecting = false;
       const wasLost = !!link;
       currentLink = link || currentLink;
+      clipUserStopped = false;
       updateLinkUI();
       if (wasLost) {
         toast(`USB 通道已恢复（${currentLink.name || '设备'}）`);
@@ -948,7 +1142,7 @@ async function initInterconnect() {
     $('#files-list').addEventListener('mousemove', (e) => {
       const item = e.target.closest('[data-meta]');
       if (!item) { tip.classList.add('hidden'); return; }
-      tip.innerHTML = item.dataset.meta;
+      if (!fillTip(tip, item.dataset.meta)) { tip.classList.add('hidden'); return; }
       tip.classList.remove('hidden');
       const margin = 6, pad = 12;
       const tw = tip.offsetWidth, th = tip.offsetHeight;
@@ -963,12 +1157,25 @@ async function initInterconnect() {
       tip.style.left = x + 'px'; tip.style.top = y + 'px';
     });
     $('#files-list').addEventListener('mouseleave', () => tip.classList.add('hidden'));
+    // 缩略图加载失败 → 优先走主进程代理（直连 <img> 无法带 X-Zian-Token），再退回文件图标
+    $('#files-list').addEventListener('error', (e) => {
+      const img = e.target;
+      if (!img || img.tagName !== 'IMG' || !img.parentNode) return;
+      const fallback = () => { if (img.dataset.fb && img.parentNode) img.parentNode.textContent = img.dataset.fb; };
+      if (currentLink && currentLink.paired && img.dataset.path && !img.dataset.ipc) {
+        img.dataset.ipc = '1';
+        api.filesThumb(currentLink, img.dataset.path).then((r) => {
+          if (r && r.ok && r.dataUrl) img.src = r.dataUrl; else fallback();
+        }).catch(fallback);
+        return;
+      }
+      fallback();
+    }, true);
 
-    // 镜像设备下拉同步主下拉
-    interDevTimer = setInterval(syncMirrorSelect, 4000);
+    // 镜像设备下拉同步主下拉（随设备轮询刷新）
     syncMirrorSelect();
-  }
-  // 投屏窗口关闭（用户点 X 或 Ctrl+C）→ 自动刷新 UI
+
+    // 投屏窗口关闭（用户点 X 或 Ctrl+C）→ 自动刷新 UI（只注册一次）
     api.onMirrorStopped(() => {
       $('#btn-mirror-start').disabled = false;
       $('#btn-mirror-stop').disabled = true;
@@ -977,8 +1184,9 @@ async function initInterconnect() {
       // 刷新连接状态（投屏退出后 adb 可能恢复）
       updateLinkUI();
     });
+  }
 
-    // 进入页面时刷新一次（按当前连接方式自动连接）
+  // 进入页面时刷新一次（按当前连接方式自动连接）
   if (!currentLink) {
     const link = await api.netAutoconnect(SET.linkMode || 'auto');
     if (link) { currentLink = link; toast(`已自动连接: ${link.name}`); }
@@ -989,20 +1197,14 @@ async function initInterconnect() {
     // 先加载当前 tab（立刻出内容）
     loadFiles(true);
     // 再并行加载其他分类补全计数
-    Promise.all(['images','videos','music','docs'].map(async (t) => {
+    Promise.all(['images', 'videos', 'music', 'docs'].map(async (t) => {
       if (!catCache[t]) {
         try {
           const res = await api.filesList(currentLink, t, '');
           if (Array.isArray(res)) catCache[t] = res;
         } catch {}
       }
-    })).then(() => {
-      // 更新所有 tab 计数
-      $('#cnt-images').textContent = (catCache.images || []).length || '';
-      $('#cnt-videos').textContent = (catCache.videos || []).length || '';
-      $('#cnt-music').textContent = (catCache.music || []).length || '';
-      $('#cnt-docs').textContent = (catCache.docs || []).length || '';
-    });
+    })).then(setCatCounts);
   }
 
   // 启动互联页实时刷新
@@ -1017,20 +1219,16 @@ function startInterTimers() {
     if (!$('#view-interconnect').classList.contains('active') || !currentLink) {
       linkOk = false; updateLinkUI(); return;
     }
-    const start = Date.now();
-    try {
-      const r = await fetch(`http://${currentLink.ip}:${currentLink.port}/ping`, { method: 'GET', signal: AbortSignal.timeout(2500) });
-      if (r.ok) {
-        const j = await r.json();
-        linkLatency = Date.now() - start;
-        linkOk = true;
-        // 同步 fg 状态到 currentLink
-        if (j.fg !== undefined) currentLink.fg = j.fg;
-      } else { linkOk = false; }
-    } catch { linkOk = false; }
+    const p = await pingOnce(currentLink);
+    if (p) {
+      linkLatency = p.latency;
+      linkOk = true;
+      // 同步 fg 状态到 currentLink
+      if (p.info.fg !== undefined) currentLink.fg = p.info.fg;
+    } else { linkOk = false; }
     updateLinkUI();
-    // 自动开剪贴板：连接存活 + 还没开 → 静默开启
-    if (linkOk && !clipWatching) {
+    // 自动开剪贴板：连接存活 + 还没开 + 没被用户主动关过 → 静默开启
+    if (linkOk && !clipWatching && !clipUserStopped) {
       try { await api.clipboardWatchStart(); clipWatching = true; $('#clip-state').textContent = '每秒自动同步中'; }
       catch {}
     }
@@ -1039,7 +1237,6 @@ function startInterTimers() {
 
 function stopInterTimers() {
   if (interHeartbeat) { clearInterval(interHeartbeat); interHeartbeat = null; }
-  if (interFilesAuto) { clearInterval(interFilesAuto); interFilesAuto = null; }
 }
 
 function syncMirrorSelect() {
@@ -1057,7 +1254,7 @@ async function scanLinks() {
   let list = [];
   if (mode === 'usb') {
     const r = await api.netConnect(null, null, { usb: true });
-    if (r.ok) { currentLink = r.link; linkList = [currentLink]; updateLinkUI(); toast(`已连接: ${currentLink.name}（USB 通道）`); return; }
+    if (r.ok) { currentLink = r.link; clipUserStopped = false; linkList = [currentLink]; updateLinkUI(); toast(`已连接: ${currentLink.name}（USB 通道）`); return; }
     toast(r.msg, true);
     linkList = [];
   } else {
@@ -1078,7 +1275,7 @@ async function scanLinks() {
   if (linkList.length === 1) {
     const dev = linkList[0];
     const r = await api.netConnect(dev.ip, dev.port, { usb: !!dev.usb, serial: dev.serial });
-    if (r.ok) { currentLink = r.link; toast(`已连接: ${currentLink.name}`); updateLinkUI(); }
+    if (r.ok) { currentLink = r.link; clipUserStopped = false; toast(`已连接: ${currentLink.name}`); updateLinkUI(); }
     else toast(r.msg, true);
   } else {
     toast(linkList.length ? `发现 ${linkList.length} 台设备` : '未发现设备（请确认手机已打开「梓安互联桥」，或改用 USB 数据线连接）', !linkList.length);
@@ -1092,6 +1289,7 @@ function updateLinkUI() {
     nameEl.innerHTML = '未连接设备';
     subEl.textContent = '点击「扫描」发现手机（局域网或 USB 数据线均可，≤30 秒自动连接）';
     metaEl.classList.remove('show');
+    setPairRowVisible();
     return;
   }
   const l = currentLink;
@@ -1110,20 +1308,76 @@ function updateLinkUI() {
     `<span>端口：<b>${esc(String(l.port))}</b></span><span>版本：<b>${esc(l.ver || '—')}</b></span>` +
     (linkOk ? `<span>延迟：<b>${linkLatency}ms</b></span>` : `<span class="link-bad">● 连接断开</span>`);
   metaEl.classList.add('show');
+  setPairRowVisible();
 }
 
 async function toggleClipWatch() {
   if (clipWatching) {
     await api.clipboardWatchStop();
     clipWatching = false;
+    clipUserStopped = true;
     $('#clip-state').textContent = '未开启 · 点击开启';
     toast('已停止剪贴板同步');
   } else {
     if (!needLink()) return;
     await api.clipboardWatchStart();
     clipWatching = true;
+    clipUserStopped = false;
     $('#clip-state').textContent = '每秒自动同步中';
     toast('已开启剪贴板自动同步（每秒）');
+  }
+}
+
+/** focusRequired：手机端后台读不到剪贴板，状态行提示一次，60s 内不再重复 */
+function showFocusRequiredHint() {
+  if (Date.now() - focusHintShownAt < 60000) return false;
+  focusHintShownAt = Date.now();
+  const el = $('#clip-state');
+  if (el) el.textContent = CLIP_FOCUS_HINT;
+  return true;
+}
+
+/** 手机端拦下了直接拉起（只能人工点通知）：状态行提示一次，60s 内不再重复 */
+function showTapRequiredHint() {
+  if (Date.now() - tapHintShownAt < 60000) return false;
+  tapHintShownAt = Date.now();
+  const el = $('#clip-state');
+  if (el) el.textContent = CLIP_TAP_HINT;
+  return true;
+}
+
+/** 「📥 从手机读剪贴板」：请手机发通知 → 每 1s 轮询最多 15s → 拿到内容就写回本机剪贴板 */
+async function pullClipFromPhone() {
+  if (clipPulling) return;
+  if (!needLink()) return;
+  const btn = $('#btn-clip-pull-focus');
+  const oldLabel = btn ? btn.textContent : '';
+  clipPulling = true;
+  if (btn) { btn.disabled = true; btn.textContent = '📥 已请求，等待手机…'; }
+  try {
+    const req = await api.clipboardPull(currentLink);
+    if (!req || !req.ok) { toast((req && req.msg) || '请求失败：设备无响应', true); return; }
+    focusHintShownAt = Date.now();   // 已主动发起，本轮不再弹 focusRequired 提示
+    // 直接拉起被系统拦下：用户只能点通知，先明确告知，再继续等（15s 内点到仍会成功）
+    if (req.launched === false && btn) { toast('请在手机上点一下通知', true); btn.textContent = '📥 请在手机上点一下通知…'; }
+    const deadline = Date.now() + CLIP_POLL_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      await new Promise((res) => setTimeout(res, CLIP_POLL_MS));
+      if (btn) btn.textContent = '📥 等待手机…';
+      const r = await api.clipboardGet(currentLink);
+      if (!r || !r.type || r.type === 'empty') continue;
+      const applied = await api.clipboardApplyRemote(r);
+      applyRemoteClipboard(r, false);
+      // 手机端在后台读不到时返回的是借焦点读到的缓存（TTL 60s），如实标注
+      const tag = r.cached ? '（来自手机缓存）' : '';
+      if (applied && applied.ok) toast('已从手机读回剪贴板' + tag);
+      else toast('手机端有新内容，但写回本机剪贴板失败' + tag, true);
+      return;
+    }
+    toast('请在手机上点一下通知', true);
+  } finally {
+    clipPulling = false;
+    if (btn) { btn.disabled = false; btn.textContent = oldLabel; }
   }
 }
 
@@ -1142,7 +1396,14 @@ function applyRemoteClipboard(p, fromPull) {
     // 静默同步：仅拉取按钮触发时提示
     if (fromPull) toast('已拉取手机剪贴板');
   } else if (p.type === 'image') {
-    prev.innerHTML = `<img src="data:${p.mime || 'image/png'};base64,${p.data}" alt="剪贴板图片">`;
+    // mime 来自手机端，不可信：拼进 innerHTML 能注入属性/事件处理器，这里改为 DOM 赋值。
+    // 畸形 mime 统一按 png 处理（原本也只会得到一张坏图）
+    const mime = /^image\/[a-z0-9.+-]+$/i.test(p.mime || '') ? p.mime : 'image/png';
+    const img = document.createElement('img');
+    img.alt = '剪贴板图片';
+    img.src = 'data:' + mime + ';base64,' + (p.data || '');
+    prev.textContent = '';
+    prev.appendChild(img);
     if (fromPull) toast('已拉取手机剪贴板图片');
   }
 }
@@ -1181,22 +1442,32 @@ async function loadFiles(force = false) {
     }
   }
   // 计数
-  fileCounts = { images: (catCache.images || []).length, videos: (catCache.videos || []).length,
-                 music: (catCache.music || []).length, docs: (catCache.docs || []).length };
-  $('#cnt-images').textContent = fileCounts.images || '';
-  $('#cnt-videos').textContent = fileCounts.videos || '';
-  $('#cnt-music').textContent = fileCounts.music || '';
-  $('#cnt-docs').textContent = fileCounts.docs || '';
+  setCatCounts();
   // 组装当前列表
   let list;
   if (curFileTab === 'recent') {
     list = [...(catCache.images || []), ...(catCache.videos || [])]
       .sort((a, b) => (b.modified || 0) - (a.modified || 0)).slice(0, 120);
-    $('#cnt-recent').textContent = list.length ? '' : '';
   } else {
     list = catCache[curFileTab] || [];
   }
   renderFiles(list, curFileTab !== 'storage');
+}
+
+// 已配对设备的缩略图统一走主进程代理（一次一张，最多 4 路并发）
+async function loadThumbsViaIpc() {
+  if (!currentLink || !currentLink.paired) return;
+  const queue = [...document.querySelectorAll('#files-list img[data-ipc="1"]')];
+  const worker = async () => {
+    while (queue.length) {
+      const img = queue.shift();
+      if (!img || !img.dataset.path) continue;
+      const r = await api.filesThumb(currentLink, img.dataset.path);
+      if (r && r.ok && r.dataUrl) { img.src = r.dataUrl; continue; }
+      if (img.parentNode) img.parentNode.textContent = img.dataset.fb || '📦';
+    }
+  };
+  await Promise.all([worker(), worker(), worker(), worker()]);
 }
 
 // 渲染（分组 + 网格/列表 + 搜索过滤）
@@ -1214,25 +1485,33 @@ function renderFiles(list, groupByDate) {
     /\.(doc|docx|xls|xlsx|ppt|pptx|pdf|txt|md|csv|wps|et|dps|epub)$/i.test(it.name) ? '📄' : '📦'
   );
   const thumbURL = (it) => `http://${currentLink.ip}:${currentLink.port}/thumb?path=${encodeURIComponent(it.path)}`;
-  const meta = (it) => (
-    `<div class="t-name">${esc(it.name)}</div>` +
-    `<b>大小</b> ${it.dir ? '目录' : formatSize(it.size)}<br>` +
-    `<b>修改</b> ${esc(fmtDate(it.modified, true))}<br>` +
-    `<b>路径</b> ${esc(it.path)}`).replace(/"/g, '&quot;');
-  const itemHtml = {
-    grid: (it) => `<div class="fm-item" data-path="${esc(it.path)}" data-dir="${it.dir ? 1 : 0}" data-name="${esc(it.name)}" data-meta="${meta(it)}">
-      <div class="fm-thumb">${(isImg(it.name) || isVid(it.name)) && !it.dir
-        ? `<img src="${thumbURL(it)}" loading="lazy" decoding="async" onerror="this.parentNode.textContent='${icon(it)}'">` : icon(it)}</div>
-      <div class="fm-name">${esc(it.name)}</div>
-      ${it.dir ? '' : `<div class="fm-size">${formatSize(it.size)}</div>`}
-    </div>`,
-    list: (it) => `<div class="fm-row" data-path="${esc(it.path)}" data-dir="${it.dir ? 1 : 0}" data-name="${esc(it.name)}" data-meta="${meta(it)}">
-      <div class="fm-thumb">${(isImg(it.name) || isVid(it.name)) && !it.dir
-        ? `<img src="${thumbURL(it)}" loading="lazy" decoding="async" onerror="this.parentNode.textContent='${icon(it)}'">` : icon(it)}</div>
-      <span class="fm-name">${esc(it.name)}</span>
-      <span class="fm-size">${it.dir ? '' : formatSize(it.size)}</span>
-      <span class="fm-date">${fmtDate(it.modified)}</span>
-    </div>`
+  // 已配对设备（鉴权生效）：<img> 无法带 X-Zian-Token，直连必然 401，直接走 IPC 代理，省掉注定失败的一跳
+  const thumbTag = (it) => {
+    const p = esc(it.path);
+    const fb = icon(it);
+    return (currentLink && currentLink.paired)
+      ? `<img data-path="${p}" data-ipc="1" loading="lazy" decoding="async" data-fb="${fb}" alt="">`
+      : `<img src="${thumbURL(it)}" data-path="${p}" loading="lazy" decoding="async" data-fb="${fb}">`;
+  };
+  // 浮层数据以 JSON 存进属性（esc 转义后无法破坏属性），读回后交给 fillTip 用 DOM 拼装。
+  // 绝不把 dataset 内容当 HTML 插入：手机端文件名可含任意 HTML
+  const meta = (it) => esc(JSON.stringify({
+    n: it.name,
+    s: it.dir ? '目录' : formatSize(it.size),
+    m: fmtDate(it.modified, true),
+    p: it.path
+  }));
+  // 网格 / 列表共用同一份模板，仅外层 class 与标签名不同
+  const itemHtml = (it, view) => {
+    const grid = view === 'grid';
+    const tag = grid ? 'div' : 'span';
+    const thumb = (isImg(it.name) || isVid(it.name)) && !it.dir ? thumbTag(it) : icon(it);
+    return `<div class="${grid ? 'fm-item' : 'fm-row'}" data-path="${esc(it.path)}" data-dir="${it.dir ? 1 : 0}" data-name="${esc(it.name)}" data-meta="${meta(it)}">
+      <div class="fm-thumb">${thumb}</div>
+      <${tag} class="fm-name">${esc(it.name)}</${tag}>
+      ${grid && it.dir ? '' : `<${tag} class="fm-size">${it.dir ? '' : formatSize(it.size)}</${tag}>`}
+      ${grid ? '' : `<span class="fm-date">${fmtDate(it.modified)}</span>`}
+    </div>`;
   };
   const bind = () => {
     $$('#files-list [data-path]').forEach((el) => {
@@ -1259,11 +1538,13 @@ function renderFiles(list, groupByDate) {
         }
       };
     });
+    // 已配对设备：缩略图走 IPC 代理（直连 <img> 带不了鉴权头）
+    loadThumbsViaIpc();
   };
   if (!groupByDate) {
     // 手机存储：目录在前，不分组
     const sorted = [...items.filter((i) => i.dir), ...items.filter((i) => !i.dir)];
-    box.innerHTML = `<div class="${fmView === 'grid' ? 'fm-grid' : 'fm-rows'}">${sorted.map(itemHtml[fmView]).join('')}</div>`;
+    box.innerHTML = `<div class="${fmView === 'grid' ? 'fm-grid' : 'fm-rows'}">${sorted.map((it) => itemHtml(it, fmView)).join('')}</div>`;
     bind();
     return;
   }
@@ -1277,7 +1558,7 @@ function renderFiles(list, groupByDate) {
   let html = '';
   for (const [g, arr] of groups) {
     html += `<div class="fm-group-title">${esc(g)}</div>`;
-    html += `<div class="${fmView === 'grid' ? 'fm-grid' : 'fm-rows'}">${arr.map(itemHtml[fmView]).join('')}</div>`;
+    html += `<div class="${fmView === 'grid' ? 'fm-grid' : 'fm-rows'}">${arr.map((it) => itemHtml(it, fmView)).join('')}</div>`;
   }
   box.innerHTML = html;
   bind();
@@ -1304,3 +1585,9 @@ function formatSize(bytes) {
   while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
   return v.toFixed(v < 10 ? 1 : 0) + ' ' + u[i];
 }
+
+// ---------- 默认启动页 ----------
+// 必须放在所有 let/const 声明之后执行：这里会同步触发视图切换（互联页会立刻调用
+// initInterconnect），在模块求值途中点击会撞上 initedInter 等声明的 TDZ，抛 ReferenceError
+const startBtn = document.querySelector(`.nav-item[data-view="${SET.startView}"]`);
+if (startBtn && SET.startView !== 'home') startBtn.click();

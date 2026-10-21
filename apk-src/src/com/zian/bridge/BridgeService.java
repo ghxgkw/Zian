@@ -15,7 +15,7 @@ import android.os.IBinder;
 import android.util.Log;
 
 /**
- * 前台服务：HttpServer + MdnsBroadcaster + ClipboardWatcher + FileReceiver 常驻。
+ * 前台服务：HttpServer + MdnsBroadcaster + FileReceiver 常驻。
  * - foregroundServiceType=dataSync
  * - 亮屏时前台服务保活，vivo 不杀有前台通知的进程
  * - 息屏时该冻结就冻结，不干预
@@ -28,13 +28,18 @@ public class BridgeService extends Service {
 
     static final String CHANNEL_ID = "zian_bridge";
     static final int NOTI_ID = 0x35791;
+    /** /clipboard/pull 通知：同一 ID 复用，点一下读取剪贴板 */
+    private static final String CLIP_CHANNEL_ID = "zian_clip_pull";
+    private static final int CLIP_NOTI_ID = 0x35792;
+    private static final int REQ_CLIP_READ = 0x35792;
     private static final String TAG = "zian/svc";
     /** 暂停状态：true=局域网暂停（仅 USB 可用），false=正常 */
     static volatile boolean sLanPaused = false;
+    /** 「借焦点一次性读取」的结果（GET /clipboard 读不到时按 TTL 兜底） */
+    private static volatile ClipReader.Snap sSnap;
 
     private HttpServer http;
     private MdnsBroadcaster mdns;
-    private ClipboardWatcher clip;
     private FileReceiver fileReceiver;
     /** 亮屏广播接收器：息屏→亮屏时恢复 HTTP 服务 */
     private BroadcastReceiver screenOnReceiver;
@@ -42,6 +47,16 @@ public class BridgeService extends Service {
     @Override
     public IBinder onBind(Intent intent) {
         return null;
+    }
+
+    /** 启动前台服务（Activity / BootReceiver / onTaskRemoved 共用，行为与原三处一致） */
+    static void startBridge(Context ctx) {
+        Intent i = new Intent(ctx, BridgeService.class);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            ctx.startForegroundService(i);
+        } else {
+            ctx.startService(i);
+        }
     }
 
     @Override
@@ -65,49 +80,80 @@ public class BridgeService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        // 处理暂停/恢复
-        if (intent != null && intent.getAction() != null) {
-            String action = intent.getAction();
-            if ("PAUSE_LAN".equals(action)) {
-                sLanPaused = true;
-                Log.i(TAG, "局域网已暂停（仅 USB 可用）");
-                // 停广播（手机不再被发现）
-                if (mdns != null) { mdns.stop(); mdns = null; }
-                updateNoti("已暂停 · 仅 USB 可用");
-                return START_STICKY;
-            }
-            if ("RESUME_LAN".equals(action)) {
-                sLanPaused = false;
-                Log.i(TAG, "局域网已恢复");
-                if (mdns == null) { mdns = new MdnsBroadcaster(this); mdns.start(); }
-                updateNoti("后台运行中");
-                return START_STICKY;
-            }
-        }
+        String action = intent == null ? null : intent.getAction();
 
-        Notification n = new Notification.Builder(this, CHANNEL_ID)
-                .setContentTitle("梓安互联桥")
-                .setContentText("后台运行中")
-                .setSmallIcon(R.drawable.ic_notification)
-                .setOngoing(true)
-                .setContentIntent(PendingIntent.getActivity(this, 0,
-                        new Intent(this, MainActivity.class),
-                        PendingIntent.FLAG_IMMUTABLE))
-                .build();
-
+        // 必须先转前台再处理 action：调用方用 startForegroundService 拉起，
+        // 若在 PAUSE/RESUME 分支提前 return（5s 内没有 startForeground），
+        // 系统会抛 RemoteServiceException 把进程搞崩。
+        Notification n = buildNoti("后台运行中");
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(NOTI_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
         } else {
             startForeground(NOTI_ID, n);
         }
 
+        if ("PAUSE_LAN".equals(action)) {
+            sLanPaused = true;
+            Log.i(TAG, "局域网已暂停（仅 USB 可用）");
+            // 停广播（手机不再被发现）
+            if (mdns != null) { mdns.stop(); mdns = null; }
+        } else if ("RESUME_LAN".equals(action)) {
+            sLanPaused = false;
+            Log.i(TAG, "局域网已恢复");
+        }
+
         // 启动各组件（如果还没启动）
         restartHttp();
         if (fileReceiver == null) { fileReceiver = new FileReceiver(this); fileReceiver.start(); }
-        if (mdns == null) { mdns = new MdnsBroadcaster(this); mdns.start(); }
-        if (clip == null) { clip = new ClipboardWatcher(this, http); clip.start(); }
+        if (mdns == null && !sLanPaused) { mdns = new MdnsBroadcaster(this); mdns.start(); }
 
+        updateNoti(sLanPaused ? "已暂停 · 仅 USB 可用" : "后台运行中");
         return START_STICKY;
+    }
+
+    static void setSnap(ClipReader.Snap s) { sSnap = s; }
+
+    static void clearSnap() { sSnap = null; }
+
+    /** 取 TTL 内的一次性读取结果，过期返回 null */
+    static ClipReader.Snap getSnap(long ttlMs) {
+        ClipReader.Snap s = sSnap;
+        if (s == null) return null;
+        return (System.currentTimeMillis() - s.at) <= ttlMs ? s : null;
+    }
+
+    /** 发「点一下读取剪贴板」通知：点击拉起 1x1 透明 ClipReadActivity 借焦点读取 */
+    static void requestClipRead(Context ctx) {
+        try {
+            NotificationManager nm = (NotificationManager) ctx.getSystemService(NOTIFICATION_SERVICE);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                NotificationChannel ch = new NotificationChannel(CLIP_CHANNEL_ID, "剪贴板读取", NotificationManager.IMPORTANCE_DEFAULT);
+                ch.setDescription("点一下通知即读取手机剪贴板并同步到电脑");
+                nm.createNotificationChannel(ch);
+            }
+            Intent i = new Intent(ctx, ClipReadActivity.class);
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            PendingIntent pi = PendingIntent.getActivity(ctx, REQ_CLIP_READ, i,
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            Notification n = new Notification.Builder(ctx, CLIP_CHANNEL_ID)
+                    .setContentTitle("读取手机剪贴板")
+                    .setContentText("点一下通知 → 读取手机剪贴板并同步到电脑")
+                    .setSmallIcon(R.drawable.ic_notification)
+                    .setAutoCancel(true)
+                    .setOnlyAlertOnce(true)
+                    .setContentIntent(pi)
+                    .build();
+            nm.notify(CLIP_NOTI_ID, n);
+        } catch (Exception e) {
+            Log.e(TAG, "剪贴板通知发送失败: " + e.getMessage());
+        }
+    }
+
+    static void cancelClipNoti(Context ctx) {
+        try {
+            NotificationManager nm = (NotificationManager) ctx.getSystemService(NOTIFICATION_SERVICE);
+            nm.cancel(CLIP_NOTI_ID);
+        } catch (Exception ignored) {}
     }
 
     /** 重启 HTTP 服务（亮屏恢复 / Service 重启时调用） */
@@ -127,14 +173,7 @@ public class BridgeService extends Service {
     @Override
     public void onTaskRemoved(Intent rootIntent) {
         super.onTaskRemoved(rootIntent);
-        try {
-            Intent i = new Intent(this, BridgeService.class);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(i);
-            } else {
-                startService(i);
-            }
-        } catch (Exception ignored) {}
+        try { startBridge(this); } catch (Exception ignored) {}
     }
 
     @Override
@@ -144,26 +183,28 @@ public class BridgeService extends Service {
             try { unregisterReceiver(screenOnReceiver); } catch (Exception ignored) {}
             screenOnReceiver = null;
         }
-        if (clip != null) { clip.stop(); clip = null; }
         if (mdns != null) { mdns.stop(); mdns = null; }
         if (fileReceiver != null) { fileReceiver.stop(); fileReceiver = null; }
         if (http != null) { http.stop(); http = null; }
     }
 
+    private Notification buildNoti(String text) {
+        return new Notification.Builder(this, CHANNEL_ID)
+                .setContentTitle("梓安互联桥")
+                .setContentText(text)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setOngoing(true)
+                .setContentIntent(PendingIntent.getActivity(this, 0,
+                        new Intent(this, MainActivity.class),
+                        PendingIntent.FLAG_IMMUTABLE))
+                .build();
+    }
+
     /** 更新通知文案 */
     private void updateNoti(String text) {
         try {
-            Notification n = new Notification.Builder(this, CHANNEL_ID)
-                    .setContentTitle("梓安互联桥")
-                    .setContentText(text)
-                    .setSmallIcon(R.drawable.ic_notification)
-                    .setOngoing(true)
-                    .setContentIntent(PendingIntent.getActivity(this, 0,
-                            new Intent(this, MainActivity.class),
-                            PendingIntent.FLAG_IMMUTABLE))
-                    .build();
             NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-            nm.notify(NOTI_ID, n);
+            nm.notify(NOTI_ID, buildNoti(text));
         } catch (Exception ignored) {}
     }
 
@@ -178,4 +219,3 @@ public class BridgeService extends Service {
         }
     }
 }
-

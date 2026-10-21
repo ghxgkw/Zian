@@ -23,6 +23,8 @@ public class MainActivity extends Activity {
     /** App 是否在前台（供 /ping 与广播判断"是否在 App 界面"） */
     public static volatile boolean sForeground = false;
 
+    private TextView tvToken;
+
     private final String[] perms() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             return new String[]{
@@ -40,6 +42,17 @@ public class MainActivity extends Activity {
         super.onCreate(s);
         setContentView(R.layout.activity_main);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+
+        tvToken = findViewById(R.id.tv_token);
+        renderToken();
+        Button btnReset = findViewById(R.id.btn_reset_token);
+        if (btnReset != null) {
+            btnReset.setOnClickListener(v -> {
+                Pairing.reset(this);
+                renderToken();
+                android.widget.Toast.makeText(this, "配对码已重置，电脑端需重新配对", android.widget.Toast.LENGTH_LONG).show();
+            });
+        }
 
         TextView tv = findViewById(R.id.tv_status);
         Button btn = findViewById(R.id.btn_start);
@@ -76,7 +89,11 @@ public class MainActivity extends Activity {
             });
         }
 
-        ensurePermsAndStart();
+        // 冷启动不主动跳「所有文件访问」设置页（会被用户当成流氓行为），
+        // 只有一切就绪时直接启动；否则等用户点按钮。onResume 会在授权返回后接手。
+        if (!readyToStart()) {
+            tv.setText("梓安互联桥\n端口 35791 · 多播 239.0.0.1\n点击「启动互联桥」授权后启动");
+        }
     }
 
     /** 跳转 vivo 后台功耗管控 / 通用应用详情，引导用户加白名单 */
@@ -99,6 +116,15 @@ public class MainActivity extends Activity {
             startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                     Uri.parse("package:" + getPackageName())));
         } catch (Exception ignored) {}
+    }
+
+    /** 运行时权限 + 「所有文件访问」是否都已满足（通知权限不影响前台服务，不算阻塞项） */
+    private boolean readyToStart() {
+        for (String p : perms()) {
+            if (Manifest.permission.POST_NOTIFICATIONS.equals(p)) continue;
+            if (checkSelfPermission(p) != PackageManager.PERMISSION_GRANTED) return false;
+        }
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.R || Environment.isExternalStorageManager();
     }
 
     private void ensurePermsAndStart() {
@@ -131,8 +157,8 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         sForeground = true;
-        // 从"所有文件访问"设置页返回后继续启动
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && Environment.isExternalStorageManager()) {
+        // 从「所有文件访问」/ 权限对话框返回后继续启动
+        if (readyToStart()) {
             startService();
         }
     }
@@ -146,16 +172,34 @@ public class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int code, String[] perms, int[] res) {
         super.onRequestPermissionsResult(code, perms, res);
-        startService();
+        if (code != REQ_PERMS) return;
+        // 不能无视 grantResults 直接起服务：那样会绕过 readyToStart() 里的存储权限检查
+        boolean all = res != null && res.length > 0;
+        if (res != null) {
+            for (int i = 0; i < res.length; i++) {
+                if (res[i] != PackageManager.PERMISSION_GRANTED
+                        && !Manifest.permission.POST_NOTIFICATIONS.equals(perms[i])) {
+                    all = false;
+                }
+            }
+        }
+        if (!all) {
+            TextView tv = findViewById(R.id.tv_status);
+            tv.setText("权限未授予，服务未启动\n请点击「启动互联桥」重新授权");
+            android.widget.Toast.makeText(this, "权限未授予，服务未启动", android.widget.Toast.LENGTH_LONG).show();
+            return;
+        }
+        ensurePermsAndStart();
+    }
+
+    /** 显示当前配对码（电脑端配对时输入这一串）；不做短码映射，避免两端理解不一致 */
+    private void renderToken() {
+        if (tvToken == null) return;
+        tvToken.setText("配对码：" + Pairing.token(this));
     }
 
     private void startService() {
-        Intent i = new Intent(this, BridgeService.class);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(i);
-        } else {
-            startService(i);
-        }
+        BridgeService.startBridge(this);
         TextView tv = findViewById(R.id.tv_status);
         tv.setText("梓安互联桥运行中\n端口 35791 · 多播 239.0.0.1\n服务已启动");
     }

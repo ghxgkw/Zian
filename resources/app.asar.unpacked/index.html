@@ -2,6 +2,8 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
+<!-- 只允许本地脚本与本地样式：禁止内联脚本、禁止远程脚本；http: 仅供局域网互联（缩略图/fetch） -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' file: data: blob:; script-src 'self' file:; style-src 'self' file: 'unsafe-inline'; img-src 'self' file: data: blob: http:; media-src 'self' file: data: blob: http:; font-src 'self' file: data:; connect-src 'self' file: http:; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>梓安搞机工具箱</title>
 <link rel="stylesheet" href="style.css">
 </head>
@@ -94,6 +96,10 @@
               <select id="link-select" class="ic-select wide"><option value="">未连接</option></select>
             </div>
             <div class="ic-dev-meta" id="ic-dev-meta"></div>
+            <div class="ic-dev-btns" id="ic-pair-row" style="margin-top:8px;display:none">
+              <input id="ic-pair-input" class="ic-select wide" maxlength="32" placeholder="配对码：手机 App 内显示的 32 位十六进制">
+              <button class="ic-chip primary" id="btn-ic-pair">确认配对</button>
+            </div>
           </div>
           <div class="ic-card ic-feature" id="card-clip" title="剪贴板双向同步：电脑或手机复制后自动同步到对端">
             <div class="ic-ficon">⇄</div>
@@ -111,6 +117,7 @@
         <div class="ic-ops">
           <div class="ic-ops-group">
             <button class="ic-chip" id="btn-clip-pull">⤓ 拉取手机剪贴板</button>
+            <button class="ic-chip" id="btn-clip-pull-focus" title="Android 10+ 后台读不到剪贴板：点此让手机弹通知，点通知后读一次并写入本机">📥 从手机读剪贴板</button>
             <button class="ic-chip" id="btn-clip-push">⤒ 推送当前剪贴板</button>
             <div class="clip-preview inline" id="clip-preview"><span class="hint">暂无同步内容</span></div>
           </div>
@@ -183,6 +190,7 @@
             <div class="btn-grid g2">
               <button class="btn" id="btn-gapps-disable"><i>⊘</i>禁用所选</button>
               <button class="btn" id="btn-gapps-enable"><i>✓</i>启用所选</button>
+              <button class="btn" id="btn-gapps-restore"><i>↺</i>批量恢复</button>
             </div>
           </div>
         </div>
@@ -324,7 +332,7 @@
           <div class="col">
             <h2 class="sec-title">屏幕录制</h2>
             <div class="input-duo">
-              <input id="rec-sec" class="line-input" type="number" value="5" min="3" max="180">
+              <input id="rec-sec" class="line-input" type="text" inputmode="numeric" value="5" placeholder="3-180">
               <select id="rec-audio">
                 <option value="playback">设备内录（系统播放音）</option>
                 <option value="mic">手机麦克风</option>
@@ -349,6 +357,12 @@
         <div class="script-layout">
           <div class="card flex-col editor-card">
             <div class="card-head">脚本编辑区 <span id="script-name-tag" class="hint"></span></div>
+            <div class="row-like" id="script-name-row" style="display:none">
+              <input id="script-name-input" class="line-input" maxlength="60" placeholder="脚本名（自动补 .bat）">
+              <span class="hint" id="script-name-hint"></span>
+              <button class="btn" id="btn-script-name-ok"><i>✓</i>确定</button>
+              <button class="btn ghost" id="btn-script-name-cancel"><i>✕</i>取消</button>
+            </div>
             <textarea id="script-editor" spellcheck="false" placeholder="未选择脚本"></textarea>
           </div>
           <div class="card flex-col mid-card">
@@ -505,3 +519,4 @@
   <script src="renderer.js"></script>
 </body>
 </html>
+

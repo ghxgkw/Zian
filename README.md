@@ -81,12 +81,14 @@ Zian/
 ├── resources/
 │   └── app.asar.unpacked/          # 桌面端源码（Electron 应用）
 │       ├── main.js                 # 主进程：ADB、连接管理、剪贴板同步、文件传输
+│       ├── lib/                    # 主进程模块：util / adb / net
 │       ├── preload.js              # 预加载脚本（IPC 桥）
 │       ├── renderer.js             # 渲染进程：全部界面逻辑
 │       ├── index.html / splash.html
 │       ├── style.css               # 含浅色/深色双主题变量
 │       ├── package.json
 │       └── assets/                 # 图标资源
+├── tools/                          # 项目内工具：pack-asar.js / verify-asar.js / md2docx.ps1
 ├── apk-src/                        # 互联桥 APK 源码与编译脚本
 │   ├── build.ps1                   # 手写编译链（无 Gradle）
 │   ├── AndroidManifest.xml
@@ -166,19 +168,16 @@ npm run dist
 
 ### 修改包内文件后重打包
 
-正常环境（有 Node）：
+使用项目内无依赖打包器（推荐，全量重建 + 哈希校验）：
 
 ```bash
-npx @electron/asar pack "resources/app.asar.unpacked" "resources/app.asar" --unpack-dir "{res,node_modules}"
+node tools/pack-asar.js "resources/app.asar.unpacked" "resources/app.asar"
+node tools/verify-asar.js "resources/app.asar" "resources/app.asar.unpacked"
 ```
 
-无 Node 环境（如本项目的分发机器）：使用仓库根目录的 `repack-asar.ps1`，它用 PowerShell 直接在现有 asar 上做**单文件级替换**（解析 pickle 头、重算数据偏移、原样回写 JSON），修改 `main.js` / `renderer.js` / `style.css` 等包内文件后执行即可：
+历史方案：`repack-asar.ps1`（依赖旧包结构、只做单文件替换，包内容缺失时会失效）。
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\repack-asar.ps1
-```
-
-> 该脚本会自动寻找 `app.asar.bak`，不存在时回退到当前 `app.asar` 读取。
+> 修改 `main.js` / `renderer.js` / `style.css` 等包内文件后必须重打包并重启工具箱。
 
 ---
 
@@ -197,10 +196,12 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 
 注意事项：
 
-- **aapt2 在中文路径下会崩溃**：脚本会自动把源码同步到纯 ASCII 路径（如 `C:\Android\apk-build`）再编译
+- **aapt2 在中文路径下会崩溃**：脚本用 `subst` 临时映射 ASCII 盘符再编译，构建目录仍在项目内 `_build/apk`
+- 签名 keystore 生成在 `_build/apk/debug.keystore`，产物为 `apk-src/app.apk`
+- 源码新增公共类：`Constants`（端口/版本）、`NetUtil`（IP）、`JsonUtil`（转义）、`IoUtil`（MD5/读流）
 - d8 需手动携带 `libs/nanohttpd-2.3.1.jar` 做 classpath 合并
 - 产物 `app.apk` 会自动复制回 `apk-src/`
-- 安装：`adb install -r app.apk`（vivo 安装确认弹窗倒计时短，脚本会先发 `input keyevent WAKEUP`）
+- 安装：`adb -s <serial> install -r -g app.apk`，随后 `adb shell appops set com.zian.bridge MANAGE_EXTERNAL_STORAGE allow`（不发送任何唤醒键）
 
 ---
 

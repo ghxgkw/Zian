@@ -9,6 +9,8 @@ import java.io.File;
 /**
  * 调起 vivo 办公套件打开文件。
  * 优先 com.yozo.vivo.office（永中 Office vivo 版），回退 com.vivo.alldocuments。
+ * file:// 对第三方应用不可读（FLAG_GRANT_READ_URI_PERMISSION 只对 content:// 生效），
+ * 统一走内置 BridgeFileProvider 的 content:// URI。
  */
 public class VivoOfficeAdapter {
 
@@ -16,7 +18,7 @@ public class VivoOfficeAdapter {
         File f = new File(path);
         if (!f.exists()) return false;
         String mime = FileHelper.guessMime(path);
-        Uri uri = Uri.fromFile(f);
+        Uri uri = BridgeFileProvider.uriFor(f);
 
         String pkg = "vivo_office".equals(app) ? "com.yozo.vivo.office" : "com.vivo.alldocuments";
         if (!launch(ctx, pkg, uri, mime)) {

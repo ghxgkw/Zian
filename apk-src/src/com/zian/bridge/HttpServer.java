@@ -11,12 +11,11 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
-import android.util.Base64;
+import android.util.Log;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import fi.iki.elonen.NanoHTTPD;
@@ -34,11 +33,10 @@ import fi.iki.elonen.NanoHTTPD;
  */
 public class HttpServer extends NanoHTTPD {
 
-    private static final int PORT = 35791;
     private final Context ctx;
 
     public HttpServer(Context ctx) {
-        super(PORT);
+        super(Constants.PORT_HTTP);
         this.ctx = ctx;
     }
 
@@ -53,8 +51,16 @@ public class HttpServer extends NanoHTTPD {
                 return newFixedLengthResponse(Response.Status.FORBIDDEN, "text/plain", "403 LAN paused");
             }
         }
+        // 配对引导：本身无鉴权，但只允许回环来源（USB forward 在手机侧看到的是 127.0.0.1）
+        if ("/pair".equals(uri)) return pair(session);
+        // 除 /ping 外全部路由都要令牌，缺失或不符一律 401
+        if (!"/ping".equals(uri) && !authorized(session)) {
+            return newFixedLengthResponse(Response.Status.UNAUTHORIZED, "application/json",
+                    "{\"ok\":false,\"err\":\"unauthorized\"}");
+        }
         try {
             if ("/ping".equals(uri)) return ping();
+            if ("/clipboard/pull".equals(uri) && m == Method.GET) return pullClipboard();
             if ("/clipboard".equals(uri) && m == Method.GET) return getClipboard();
             if ("/clipboard".equals(uri) && m == Method.POST) return setClipboard(session);
             if ("/files".equals(uri) && m == Method.GET) return listFiles(session);
@@ -72,11 +78,12 @@ public class HttpServer extends NanoHTTPD {
         String name = android.os.Build.MODEL;
         String brand = android.os.Build.BRAND;
         String androidVer = android.os.Build.VERSION.RELEASE;
-        String ip = getIp();
+        String ip = NetUtil.getIp();
         String fg = MainActivity.sForeground ? "true" : "false";
+        String displayName = name + "(" + brand + ")";
         String json = String.format(
-                "{\"ok\":true,\"name\":\"%s\",\"model\":\"%s\",\"android\":\"%s\",\"ver\":\"1.0\",\"ip\":\"%s\",\"brand\":\"%s\",\"fg\":%s}",
-                safe(name), safe(name), safe(androidVer), safe(ip), safe(brand), fg);
+                "{\"ok\":true,\"name\":\"%s\",\"model\":\"%s\",\"android\":\"%s\",\"ver\":\"%s\",\"ip\":\"%s\",\"brand\":\"%s\",\"fg\":%s,\"port\":%d}",
+                JsonUtil.esc(displayName), JsonUtil.esc(name), JsonUtil.esc(androidVer), Constants.VER, JsonUtil.esc(ip), JsonUtil.esc(brand), fg, Constants.PORT_HTTP);
         return newFixedLengthResponse(Response.Status.OK, "application/json", json);
     }
 
@@ -84,16 +91,10 @@ public class HttpServer extends NanoHTTPD {
     private Response getThumb(IHTTPSession session) {
         String path = firstParam(session.getParameters(), "path", null);
         if (path == null) return json("{\"ok\":false,\"err\":\"no path\"}");
-        Bitmap bmp = ThumbCache.get(path);
-        if (bmp == null) {
-            bmp = makeThumb(path);
-            if (bmp == null) return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "no thumb");
-            ThumbCache.put(path, bmp);
-        }
-        ByteArrayOutputStream bout = new ByteArrayOutputStream();
-        bmp.compress(Bitmap.CompressFormat.JPEG, 62, bout);
+        byte[] jpg = ThumbCache.jpeg(path, this::makeThumb);
+        if (jpg == null) return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "no thumb");
         return newFixedLengthResponse(Response.Status.OK, "image/jpeg",
-                new java.io.ByteArrayInputStream(bout.toByteArray()), bout.size());
+                new java.io.ByteArrayInputStream(jpg), jpg.length);
     }
 
     private Bitmap makeThumb(String path) {
@@ -106,10 +107,12 @@ public class HttpServer extends NanoHTTPD {
                 if (cached != null) return scaleDown(cached);
                 // 缓存没有才用 MediaMetadataRetriever 抽帧
                 android.media.MediaMetadataRetriever mmr = new android.media.MediaMetadataRetriever();
-                mmr.setDataSource(path);
-                Bitmap src = mmr.getFrameAtTime(1_000_000, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
-                mmr.release();
-                return scaleDown(src);
+                try {
+                    mmr.setDataSource(path);
+                    return scaleDown(mmr.getFrameAtTime(1_000_000, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC));
+                } finally {
+                    try { mmr.release(); } catch (Exception ignored) {}
+                }
             }
             // 图片：采样解码，控制内存
             android.graphics.BitmapFactory.Options opts = new android.graphics.BitmapFactory.Options();
@@ -151,66 +154,88 @@ public class HttpServer extends NanoHTTPD {
         return Bitmap.createScaledBitmap(src, Math.round(w * ratio), Math.round(h * ratio), true);
     }
 
-    /** 简单 LRU 位图缓存（上限 96 张） */
+    /** 简单 LRU 位图缓存（上限 96 张，淘汰时立即 recycle：480px JPEG 位图常驻峰值曾达 ~88MB） */
     private static class ThumbCache {
         private static final java.util.LinkedHashMap<String, Bitmap> MAP =
                 new java.util.LinkedHashMap<String, Bitmap>(32, 0.75f, true) {
                     protected boolean removeEldestEntry(java.util.Map.Entry<String, Bitmap> e) {
-                        return size() > 96;
+                        if (size() <= 96) return false;
+                        Bitmap old = e.getValue();
+                        if (old != null && !old.isRecycled()) old.recycle();
+                        return true;
                     }
                 };
-        static Bitmap get(String k) { synchronized (MAP) { return MAP.get(k); } }
-        static void put(String k, Bitmap v) { synchronized (MAP) { MAP.put(k, v); } }
-    }
-
-    private Response getClipboard() {
-        ClipboardManager cm = (ClipboardManager) ctx.getSystemService(Context.CLIPBOARD_SERVICE);
-        if (!cm.hasPrimaryClip() || cm.getPrimaryClip() == null) {
-            return json("{\"type\":\"empty\",\"sig\":\"\"}");
-        }
-        ClipData cd = cm.getPrimaryClip();
-        ClipData.Item item = cd.getItemAt(0);
-        // sig 必须是内容哈希（与 PC 端格式 type:len:hash8 对齐）。
-        // 以前用 System.currentTimeMillis()，PC 端每次轮询都当成新内容，
-        // 导致 PC<->手机双向同步死循环、相册堆满重复图。
-        String sig = "";
-
-        // 优先：URI（图片）
-        Uri uri = item.getUri();
-        if (uri != null) {
-            try {
-                java.io.InputStream in = ctx.getContentResolver().openInputStream(uri);
+        /** 取缓存 → 缺则解码 → JPEG 编码；编码期间持锁，淘汰 recycle 不会打断正在压缩的位图 */
+        static byte[] jpeg(String k, java.util.function.Function<String, Bitmap> maker) {
+            Bitmap bmp;
+            synchronized (MAP) { bmp = MAP.get(k); }
+            if (bmp == null || bmp.isRecycled()) {
+                bmp = maker.apply(k);
+                if (bmp == null) return null;
+                synchronized (MAP) { MAP.put(k, bmp); }
+            }
+            synchronized (MAP) {
+                if (bmp.isRecycled()) return null;
                 ByteArrayOutputStream bout = new ByteArrayOutputStream();
-                byte[] buf = new byte[1 << 16];
-                int n;
-                while ((n = in.read(buf)) > 0) bout.write(buf, 0, n);
-                in.close();
-                String md5 = md5Hex(bout.toByteArray());
-                sig = "img:" + bout.size() + ":" + md5.substring(0, Math.min(8, md5.length()));
-                String b64 = Base64.encodeToString(bout.toByteArray(), Base64.NO_WRAP);
-                String mime = ctx.getContentResolver().getType(uri);
-                if (mime == null) mime = "image/png";
-                return json("{\"type\":\"image\",\"mime\":\"" + safe(mime) + "\",\"data\":\"" + b64 + "\",\"sig\":\"" + sig + "\"}");
-            } catch (Exception e) {
-                // fall through to text
+                bmp.compress(Bitmap.CompressFormat.JPEG, 62, bout);
+                return bout.toByteArray();
             }
         }
-        // 文本
-        CharSequence text = item.getText();
-        if (text != null) {
-            String t = text.toString();
-            byte[] raw = t.getBytes(StandardCharsets.UTF_8);
-            String md5 = md5Hex(raw);
-            sig = "txt:" + raw.length + ":" + md5.substring(0, Math.min(8, md5.length()));
-            String b64 = Base64.encodeToString(raw, Base64.NO_WRAP);
-            return json("{\"type\":\"text\",\"data\":\"" + b64 + "\",\"sig\":\"" + sig + "\"}");
+    }
+
+    /** 一次性读取结果的缓存有效期：PC 每 1s 轮询，通知→点击一般几秒内完成，60s 够交互又不会长期返回过期内容 */
+    private static final long SNAP_TTL_MS = 60_000;
+
+    private Response getClipboard() {
+        ClipReader.Snap s = ClipReader.read(ctx);
+        if (s != null) return json(s.json(false));
+        // Android 10+ 焦点闸门：进程在后台时 getPrimaryClip 返回空，读不到 ≠ 真的空。
+        // 用「借焦点一次性读取」（GET /clipboard/pull → 点通知）的缓存兜底。
+        if (MainActivity.sForeground) return json("{\"type\":\"empty\",\"sig\":\"\"}");
+        ClipReader.Snap cached = BridgeService.getSnap(SNAP_TTL_MS);
+        if (cached != null) return json(cached.json(true));
+        return json("{\"type\":\"empty\",\"sig\":\"\",\"focusRequired\":true}");
+    }
+
+    /** direct start 判定窗口：startActivity 被 BAL 拦截时不抛异常，只能看透明 Activity 有没有真的被创建 */
+    private static final long DIRECT_START_WAIT_MS = 700;
+    /** logcat 固定 tag：adb logcat -s ZianPull */
+    private static final String TAG_PULL = "ZianPull";
+
+    /**
+     * 借焦点读取：先按老路径发通知（兜底，路径不变），再尝试直接 startActivity 拉起 1x1 透明 Activity。
+     * 直接拉起成功则用户无需点通知；被 BAL / 厂商「后台弹出界面」拦截时静默失败，仍走通知路径。
+     * 整段 try/catch：任何异常都不影响 HTTP 响应。
+     */
+    private Response pullClipboard() {
+        BridgeService.requestClipRead(ctx);
+        boolean launched = false;
+        String note;
+        try {
+            long before = ClipReadActivity.lastCreateAt();
+            Intent i = new Intent(ctx, ClipReadActivity.class);
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            ctx.startActivity(i);
+            long deadline = System.currentTimeMillis() + DIRECT_START_WAIT_MS;
+            while (System.currentTimeMillis() < deadline) {
+                if (ClipReadActivity.lastCreateAt() != before) { launched = true; break; }
+                try {
+                    Thread.sleep(20);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            note = launched ? "direct start ok" : "direct start blocked";
+        } catch (Throwable t) {
+            // 部分 ROM 的 BAL 实现直接抛 SecurityException；其余异常同样吞掉
+            note = "direct start exception: " + t;
         }
-        // Intent（如复制快捷方式）
-        Intent intent = item.getIntent();
-        if (intent != null) {
-            return json("{\"type\":\"intent\",\"data\":\"\",\"sig\":\"" + sig + "\"}");
-        }
-        return json("{\"type\":\"empty\",\"sig\":\"\"}");
+        // 用 W 而非 I：实测该机（vivo OriginOS/Android 16）logcat 对第三方 App 的 I/D 级日志整体过滤，
+        // 5s 全缓冲区 0 行 I 级；只有 W/E 可见。用 W 才能 adb logcat -s ZianPull 抓到，功能语义不变。
+        Log.w(TAG_PULL, note);
+        return json("{\"ok\":true,\"focusRequired\":true,\"launched\":" + launched
+                + ",\"launchNote\":\"" + JsonUtil.esc(note) + "\"}");
     }
 
     private Response setClipboard(IHTTPSession session) throws Exception {
@@ -222,7 +247,7 @@ public class HttpServer extends NanoHTTPD {
             if (tmp == null) return json("{\"ok\":false,\"err\":\"no file\"}");
             // 原样读取字节（不 decode->re-encode）：保证手机剪贴板内容与 PC 推送字节一致，
             // 回传的内容哈希才能与 PC 端记录的 sig 对上，否则双向同步死循环。
-            byte[] png = readFileBytes(tmp);
+            byte[] png = IoUtil.readFileBytes(tmp);
             // NanoHTTPD parseBody 会把 multipart 文件写入临时文件（DefaultTempFileManager），
             // 数据已在内存，读取后立即删除，否则每次推图都在 tmp 目录残留一个完整 PNG（磁盘泄漏）
             new File(tmp).delete();
@@ -231,12 +256,12 @@ public class HttpServer extends NanoHTTPD {
             if (bmp == null) return json("{\"ok\":false,\"err\":\"not image\"}");
             ClipboardManager cm = (ClipboardManager) ctx.getSystemService(Context.CLIPBOARD_SERVICE);
             // 文件名用内容哈希 + MediaStore 查重：同一张图无论推送多少次，相册只有一份
-            String md5 = md5Hex(png);
+            String md5 = IoUtil.md5Hex(png);
             Uri imgUri = writeToMediaStore(png, "clip_" + md5.substring(0, Math.min(10, md5.length())) + ".png");
             if (imgUri != null) {
                 ClipData cd = ClipData.newUri(ctx.getContentResolver(), "image", imgUri);
                 cm.setPrimaryClip(cd);
-                if (clip != null) clip.echoGuard(imgUri.toString());
+                BridgeService.clearSnap();
                 return json("{\"ok\":true}");
             }
             return json("{\"ok\":false,\"err\":\"write fail\"}");
@@ -251,19 +276,13 @@ public class HttpServer extends NanoHTTPD {
             String text = body.get("content");
             if (text == null) text = body.get("postData");
             if (text == null) text = "";
-            if (text.length() > 2 && text.startsWith("\"") && text.endsWith("\"")) {
-                text = text.substring(1, text.length() - 1);
-            }
             ClipboardManager cm = (ClipboardManager) ctx.getSystemService(Context.CLIPBOARD_SERVICE);
             ClipData cd = ClipData.newPlainText("zian", text);
             cm.setPrimaryClip(cd);
-            if (clip != null) clip.echoGuard(text);
+            BridgeService.clearSnap();
             return json("{\"ok\":true}");
         }
     }
-
-    private ClipboardWatcher clip;
-    public void setClipboardWatcher(ClipboardWatcher w) { this.clip = w; }
 
     /** 原样写入 MediaStore（Pictures/ZianClip），同名（内容哈希名）直接复用已有条目，避免相册堆积重复图 */
     private Uri writeToMediaStore(byte[] png, String name) {
@@ -293,9 +312,19 @@ public class HttpServer extends NanoHTTPD {
             android.net.Uri base = android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
             android.net.Uri uri = ctx.getContentResolver().insert(base, cv);
             if (uri == null) return null;
-            java.io.OutputStream out = ctx.getContentResolver().openOutputStream(uri);
-            out.write(png);
-            out.close();
+            // try-with-resources：写失败也要关流，否则留下的 IS_PENDING=1 条目在相册里是僵尸
+            boolean written = true;
+            try {
+                java.io.OutputStream os0 = ctx.getContentResolver().openOutputStream(uri);
+                if (os0 == null) throw new java.io.IOException("no stream");
+                try (java.io.OutputStream out = os0) {
+                    out.write(png);
+                }
+            } catch (Exception e) {
+                written = false;
+                try { ctx.getContentResolver().delete(uri, null, null); } catch (Exception ignored) {}
+            }
+            if (!written) return null;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 cv.clear();
                 cv.put(android.provider.MediaStore.Images.Media.IS_PENDING, 0);
@@ -308,33 +337,7 @@ public class HttpServer extends NanoHTTPD {
         }
     }
 
-    /** MD5 hex（小写），异常时退回长度串 */
-    private String md5Hex(byte[] data) {
-        try {
-            java.security.MessageDigest md = java.security.MessageDigest.getInstance("MD5");
-            byte[] d = md.digest(data);
-            StringBuilder sb = new StringBuilder(d.length * 2);
-            for (byte b : d) sb.append(Character.forDigit((b >> 4) & 0xf, 16)).append(Character.forDigit(b & 0xf, 16));
-            return sb.toString();
-        } catch (Exception e) {
-            return String.valueOf(data == null ? 0 : data.length);
-        }
-    }
-
-    /** 读取整个文件到内存 */
-    private byte[] readFileBytes(String path) {
-        try {
-            java.io.FileInputStream fis = new java.io.FileInputStream(path);
-            ByteArrayOutputStream bout = new ByteArrayOutputStream();
-            byte[] buf = new byte[1 << 16];
-            int n;
-            while ((n = fis.read(buf)) > 0) bout.write(buf, 0, n);
-            fis.close();
-            return bout.toByteArray();
-        } catch (Exception e) {
-            return null;
-        }
-    }
+    /** MD5/文件读取见 IoUtil */
 
     private Response listFiles(IHTTPSession session) {
         java.util.Map<String, List<String>> params = session.getParameters();
@@ -355,11 +358,11 @@ public class HttpServer extends NanoHTTPD {
             java.io.BufferedInputStream bis = new java.io.BufferedInputStream(fis, 1 << 20);
             String mime = FileHelper.guessMime(path);
             Response res = newFixedLengthResponse(Response.Status.OK, mime, bis, f.length());
-            res.addHeader("Content-Disposition", "attachment; filename=\"" + safe(f.getName()) + "\"");
+            res.addHeader("Content-Disposition", "attachment; filename=\"" + JsonUtil.esc(f.getName()) + "\"");
             res.addHeader("Connection", "keep-alive");
             return res;
         } catch (Exception e) {
-            return json("{\"ok\":false,\"err\":\"" + safe(e.getMessage()) + "\"}");
+            return json("{\"ok\":false,\"err\":\"" + JsonUtil.esc(e.getMessage()) + "\"}");
         }
     }
 
@@ -372,6 +375,27 @@ public class HttpServer extends NanoHTTPD {
         return json("{\"ok\":" + ok + "}");
     }
 
+    /** 令牌校验：请求头 X-Zian-Token 必须与当前配对令牌一致 */
+    private boolean authorized(IHTTPSession session) {
+        String given = session.getHeaders().get("x-zian-token");
+        return given != null && given.equals(Pairing.token(ctx));
+    }
+
+    /** 配对引导：回环来源才返回令牌，否则 403 */
+    private Response pair(IHTTPSession session) {
+        if (isLoopback(session.getRemoteIpAddress())) {
+            return json("{\"ok\":true,\"token\":\"" + Pairing.token(ctx) + "\"}");
+        }
+        return newFixedLengthResponse(Response.Status.FORBIDDEN, "application/json",
+                "{\"ok\":false,\"err\":\"pair requires local connection\"}");
+    }
+
+    private static boolean isLoopback(String ip) {
+        if (ip == null) return false;
+        if (ip.startsWith("127.") || "localhost".equals(ip)) return true;
+        return "::1".equals(ip) || "0:0:0:0:0:0:0:1".equals(ip);
+    }
+
     /** NanoHTTPD getParameters 返回 Map<String, List<String>>，这里取第一个值。 */
     private String firstParam(java.util.Map<String, List<String>> params, String key, String def) {
         java.util.List<String> v = params.get(key);
@@ -381,28 +405,5 @@ public class HttpServer extends NanoHTTPD {
 
     private Response json(String s) {
         return newFixedLengthResponse(Response.Status.OK, "application/json", s);
-    }
-
-    private String getIp() {
-        try {
-            java.util.Enumeration<java.net.NetworkInterface> ifs = java.net.NetworkInterface.getNetworkInterfaces();
-            while (ifs.hasMoreElements()) {
-                java.net.NetworkInterface ni = ifs.nextElement();
-                if (!ni.isUp() || ni.isLoopback()) continue;
-                java.util.Enumeration<java.net.InetAddress> addrs = ni.getInetAddresses();
-                while (addrs.hasMoreElements()) {
-                    java.net.InetAddress addr = addrs.nextElement();
-                    if (addr instanceof java.net.Inet4Address && !addr.isLoopbackAddress()) {
-                        return addr.getHostAddress();
-                    }
-                }
-            }
-        } catch (Exception e) {}
-        return "";
-    }
-
-    private String safe(String s) {
-        if (s == null) return "";
-        return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ").replace("\r", " ");
     }
 }

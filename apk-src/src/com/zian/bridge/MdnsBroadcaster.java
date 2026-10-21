@@ -15,9 +15,6 @@ import java.nio.charset.StandardCharsets;
  */
 public class MdnsBroadcaster {
 
-    private static final String GROUP = "239.0.0.1";
-    private static final int PORT = 35791;
-
     private final Context ctx;
     private volatile boolean run = false;
     private Thread t;
@@ -43,16 +40,19 @@ public class MdnsBroadcaster {
             try {
                 s = new MulticastSocket();
                 s.setTimeToLive(255);
-                InetAddress group = InetAddress.getByName(GROUP);
+                InetAddress group = InetAddress.getByName(Constants.MULTICAST_GROUP);
                 String name = Build.MODEL;
                 String brand = Build.BRAND;
+                String displayName = name + "(" + brand + ")";
                 String androidVer = Build.VERSION.RELEASE;
-                String ip = getIp();
+                String ip = NetUtil.getIp();
                 String msg = String.format(
-                        "{\"name\":\"%s\",\"model\":\"%s\",\"brand\":\"%s\",\"android\":\"%s\",\"ver\":\"1.0\",\"port\":%d,\"filePort\":35792,\"ip\":\"%s\",\"fg\":%s}",
-                        name, name, brand, androidVer, PORT, ip, MainActivity.sForeground ? "true" : "false");
+                        "{\"name\":\"%s\",\"model\":\"%s\",\"brand\":\"%s\",\"android\":\"%s\",\"ver\":\"%s\",\"port\":%d,\"filePort\":%d,\"ip\":\"%s\",\"fg\":%s}",
+                        JsonUtil.esc(displayName), JsonUtil.esc(name), JsonUtil.esc(brand), JsonUtil.esc(androidVer),
+                        Constants.VER, Constants.PORT_HTTP, Constants.PORT_FILE, JsonUtil.esc(ip),
+                        MainActivity.sForeground ? "true" : "false");
                 byte[] data = msg.getBytes(StandardCharsets.UTF_8);
-                DatagramPacket pkt = new DatagramPacket(data, data.length, group, PORT);
+                DatagramPacket pkt = new DatagramPacket(data, data.length, group, Constants.PORT_HTTP);
                 s.send(pkt);
             } catch (Exception e) {
                 // 静默
@@ -61,23 +61,5 @@ public class MdnsBroadcaster {
             }
             try { Thread.sleep(5000); } catch (InterruptedException e) { break; }
         }
-    }
-
-    private String getIp() {
-        try {
-            java.util.Enumeration<java.net.NetworkInterface> ifs = java.net.NetworkInterface.getNetworkInterfaces();
-            while (ifs.hasMoreElements()) {
-                java.net.NetworkInterface ni = ifs.nextElement();
-                if (!ni.isUp() || ni.isLoopback()) continue;
-                java.util.Enumeration<java.net.InetAddress> addrs = ni.getInetAddresses();
-                while (addrs.hasMoreElements()) {
-                    java.net.InetAddress addr = addrs.nextElement();
-                    if (addr instanceof java.net.Inet4Address && !addr.isLoopbackAddress()) {
-                        return addr.getHostAddress();
-                    }
-                }
-            }
-        } catch (Exception e) {}
-        return "";
     }
 }
